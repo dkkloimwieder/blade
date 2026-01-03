@@ -44,6 +44,10 @@ impl super::Context {
             naga::valid::Capabilities::RAY_QUERY,
             !device_caps.ray_query.is_empty(),
         );
+        caps.set(
+            naga::valid::Capabilities::DUAL_SOURCE_BLENDING,
+            device_caps.dual_source_blending,
+        );
         let info = naga::valid::Validator::new(flags, caps)
             .validate(&module)
             .map_err(|e| {
