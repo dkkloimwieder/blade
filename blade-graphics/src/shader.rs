@@ -18,7 +18,9 @@ impl super::Context {
         desc: super::ShaderDesc,
     ) -> Result<super::Shader, &'static str> {
         let module = naga::front::wgsl::parse_str(desc.source).map_err(|e| {
-            e.emit_to_stderr_with_path(desc.source, "");
+            // naga v28: emit_to_stderr_with_path removed, use emit_to_string_with_path
+            let error_msg = e.emit_to_string_with_path(desc.source, "");
+            log::error!("WGSL parse error:\n{}", error_msg);
             "compilation failed"
         })?;
 
@@ -27,8 +29,17 @@ impl super::Context {
         // Bindings are set up at pipeline creation, ignore here
         let flags = naga::valid::ValidationFlags::all() ^ naga::valid::ValidationFlags::BINDINGS;
         let mut caps = naga::valid::Capabilities::empty();
+        // SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING is native-only (Vulkan/Metal/DX12)
+        // WebGPU does not support this capability
+        #[cfg(not(blade_wgpu))]
         caps.set(
-            naga::valid::Capabilities::RAY_QUERY | naga::valid::Capabilities::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
+            naga::valid::Capabilities::RAY_QUERY
+                | naga::valid::Capabilities::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
+            !device_caps.ray_query.is_empty(),
+        );
+        #[cfg(blade_wgpu)]
+        caps.set(
+            naga::valid::Capabilities::RAY_QUERY,
             !device_caps.ray_query.is_empty(),
         );
         let info = naga::valid::Validator::new(flags, caps)
@@ -78,8 +89,9 @@ impl super::Shader {
         &'a self,
         constants: &super::PipelineConstants,
     ) -> (naga::Module, Cow<'a, naga::valid::ModuleInfo>) {
+        // naga v28: process_overrides takes entry_point as 3rd arg
         let (module, info) =
-            naga::back::pipeline_constants::process_overrides(&self.module, &self.info, constants)
+            naga::back::pipeline_constants::process_overrides(&self.module, &self.info, None, constants)
                 .unwrap();
         (module.into_owned(), info)
     }
@@ -262,11 +274,13 @@ impl super::Shader {
                             );
                             continue;
                         }
+                        // naga v28: added per_primitive field
                         let binding = naga::Binding::Location {
                             location: attribute_mappings.len() as u32,
                             interpolation: None,
                             sampling: None,
                             blend_src: None,
+                            per_primitive: false,
                         };
                         for (buffer_index, vertex_fetch) in fetch_states.iter().enumerate() {
                             for (attribute_index, &(at_name, _)) in
@@ -294,11 +308,13 @@ impl super::Shader {
                     // Just fill out the locations for the module to be valid
                     for member in members.iter_mut() {
                         if member.binding.is_none() {
+                            // naga v28: added per_primitive field
                             member.binding = Some(naga::Binding::Location {
                                 location,
                                 interpolation: None,
                                 sampling: None,
                                 blend_src: None,
+                                per_primitive: false,
                             });
                             location += 1;
                         }

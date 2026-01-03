@@ -21,8 +21,12 @@ glam = { version = "0.30", features = ["mint"] }
 gltf = { version = "1.1", default-features = false }
 log = "0.4"
 mint = "0.5"
-naga = { version = "25.0", features = ["wgsl-in"] }
+naga = { version = "28.0", features = ["wgsl-in"] }
+pollster = "0.4"
 profiling = "1"
+slotmap = "1.0"
+# wgpu for the webgpu backend - uses its own naga internally
+wgpu = "28"
 slab = "0.4"
 strum = { version = "0.27", features = ["derive"] }
 web-sys = "0.3.60"
@@ -115,4 +119,4 @@ allowed_external_types = [
 ]
 
 [lints.rust]
-unexpected_cfgs = { level = "allow", check-cfg = ['cfg(gles)'] }
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(gles)', 'cfg(blade_wgpu)'] }

@@ -55,6 +55,7 @@ pub mod derive;
 #[cfg_attr(
     all(
         not(gles),
+        not(blade_wgpu),
         any(
             vulkan,
             windows,
@@ -64,6 +65,10 @@ pub mod derive;
         )
     ),
     path = "vulkan/mod.rs"
+)]
+#[cfg_attr(
+    all(blade_wgpu, not(gles)),
+    path = "webgpu/mod.rs"
 )]
 #[cfg_attr(any(gles, target_arch = "wasm32"), path = "gles/mod.rs")]
 mod hal;

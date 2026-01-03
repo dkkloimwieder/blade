@@ -12,7 +12,7 @@ repository = "https://github.com/kvark/blade"
 [dependencies]
 bitflags = { workspace = true }
 bytemuck = { workspace = true }
-codespan-reporting = "0.12"
+codespan-reporting = "0.13"
 hidden-trait = "0.1"
 log = { workspace = true }
 mint = { workspace = true }
@@ -119,6 +119,17 @@ web-sys = { workspace = true, features = [
 ] }
 js-sys = "0.3.60"
 
+# WebGPU backend dependencies (use blade_wgpu to avoid conflict with wgpu's webgpu feature)
+[target.'cfg(blade_wgpu)'.dependencies]
+slotmap = { workspace = true }
+wgpu = { workspace = true }
+
+[target.'cfg(all(blade_wgpu, not(target_arch = "wasm32")))'.dependencies]
+pollster = { workspace = true }
+
+[target.'cfg(all(blade_wgpu, target_arch = "wasm32"))'.dependencies]
+wasm-bindgen-futures = "0.4"
+
 [package.metadata.cargo_check_external_types]
 allowed_external_types = [
     "bitflags::*",
@@ -128,4 +139,4 @@ allowed_external_types = [
 ]
 
 [lints.rust]
-unexpected_cfgs = { level = "allow", check-cfg = ['cfg(gles)'] }
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(gles)', 'cfg(webgpu)'] }

@@ -90,17 +90,37 @@ CommandEncoder
 
 The full Blade engine (with blade-render) requires Vulkan with hardware ray tracing.
 
-## Issue Tracking (bd/beads)
+## Task Tracking (bd/beads) - MANDATORY
 
-This project uses `bd` (beads) for issue tracking.
+### ⚠️ CRITICAL: CREATE BEADS ISSUE BEFORE DOING ANY WORK
+
+**Before writing ANY code or making ANY changes:**
+1. Create a beads issue for the work: `bd create --title="..." --type=task`
+2. Mark it in progress: `bd update <id> --status=in_progress`
+3. THEN start working
+
+**NO EXCEPTIONS.** Every code change, bug fix, or task must have a beads issue FIRST.
+
+Do NOT use TodoWrite or any other task tracking - ONLY beads.
+
 Run `bd prime` for workflow context, or `bd hooks install` to auto-inject at session start.
+
+### Commands
 
 ```bash
 bd ready                                 # Find unblocked work
-bd create "Title" --type task --priority 2  # Create issue
-bd close <id>                            # Complete work
+bd create --title="..." --type=task --priority=2  # Create issue BEFORE starting work
+bd update <id> --status=in_progress      # Mark as in progress
+bd close <id> --reason="..."             # Complete work with reason
 bd sync                                  # Sync with git (run at session end)
 ```
+
+### Workflow
+
+1. **Before any work**: `bd create` → `bd update --status=in_progress`
+2. **During work**: Make granular issues for sub-problems as they arise
+3. **Completing work**: `bd close` each issue with a reason
+4. **Session end**: `git pull --rebase && bd sync && git push`
 
 ## Key Files
 
