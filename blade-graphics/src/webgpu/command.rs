@@ -5,6 +5,106 @@
 use super::*;
 
 //=============================================================================
+// ShaderBindable Implementations
+//=============================================================================
+
+/// Round up uniform size to alignment
+fn round_up_uniform_size(size: u32, alignment: u32) -> u32 {
+    let mask = alignment - 1;
+    (size + mask) & !mask
+}
+
+impl<T: bytemuck::Pod> crate::ShaderBindable for T {
+    fn bind_to(&self, ctx: &mut PipelineContext, index: u32) {
+        let self_slice = bytemuck::bytes_of(self);
+        let alignment = ctx.limits.uniform_buffer_alignment as usize;
+        let rem = ctx.plain_data.len() % alignment;
+        if rem != 0 {
+            ctx.plain_data
+                .resize(ctx.plain_data.len() - rem + alignment, 0);
+        }
+        let offset = ctx.plain_data.len() as u32;
+        let size = round_up_uniform_size(self_slice.len() as u32, ctx.limits.uniform_buffer_alignment);
+        ctx.plain_data.extend_from_slice(self_slice);
+        ctx.plain_data
+            .extend((self_slice.len() as u32..size).map(|_| 0));
+
+        for slot in ctx.targets[index as usize].iter() {
+            ctx.commands.push(Command::RecordBindGroup {
+                group_index: slot.group,
+                entries: vec![BindGroupEntry::PlainData {
+                    binding: slot.binding,
+                    offset,
+                    size,
+                }],
+            });
+        }
+    }
+}
+
+impl crate::ShaderBindable for TextureView {
+    fn bind_to(&self, ctx: &mut PipelineContext, index: u32) {
+        for slot in ctx.targets[index as usize].iter() {
+            ctx.commands.push(Command::RecordBindGroup {
+                group_index: slot.group,
+                entries: vec![BindGroupEntry::Texture {
+                    binding: slot.binding,
+                    view_key: self.raw,
+                }],
+            });
+        }
+    }
+}
+
+impl<'a, const N: crate::ResourceIndex> crate::ShaderBindable for &'a crate::TextureArray<N> {
+    fn bind_to(&self, _ctx: &mut PipelineContext, _index: u32) {
+        unimplemented!("TextureArray binding not supported in WebGPU base spec")
+    }
+}
+
+impl crate::ShaderBindable for Sampler {
+    fn bind_to(&self, ctx: &mut PipelineContext, index: u32) {
+        for slot in ctx.targets[index as usize].iter() {
+            ctx.commands.push(Command::RecordBindGroup {
+                group_index: slot.group,
+                entries: vec![BindGroupEntry::Sampler {
+                    binding: slot.binding,
+                    sampler_key: self.raw,
+                }],
+            });
+        }
+    }
+}
+
+impl crate::ShaderBindable for crate::BufferPiece {
+    fn bind_to(&self, ctx: &mut PipelineContext, index: u32) {
+        for slot in ctx.targets[index as usize].iter() {
+            ctx.commands.push(Command::RecordBindGroup {
+                group_index: slot.group,
+                entries: vec![BindGroupEntry::Buffer {
+                    binding: slot.binding,
+                    buffer_key: self.buffer.raw,
+                    offset: self.offset,
+                    size: self.buffer.size - self.offset,
+                }],
+            });
+        }
+    }
+}
+
+impl<'a, const N: crate::ResourceIndex> crate::ShaderBindable for &'a crate::BufferArray<N> {
+    fn bind_to(&self, _ctx: &mut PipelineContext, _index: u32) {
+        unimplemented!("BufferArray binding not supported in WebGPU base spec")
+    }
+}
+
+impl crate::ShaderBindable for AccelerationStructure {
+    fn bind_to(&self, _ctx: &mut PipelineContext, _index: u32) {
+        panic!("AccelerationStructure not supported in WebGPU backend")
+    }
+}
+
+//=============================================================================
 // Command Types
 //=============================================================================
 
@@ -422,6 +522,188 @@ impl crate::traits::TransferEncoder for TransferCommandEncoder<'_> {
             dst: dst.into(),
             bytes_per_row,
             size,
+        });
+    }
+}
+
+//=============================================================================
+// RenderEncoder Implementation
+//=============================================================================
+
+#[hidden_trait::expose]
+impl crate::traits::RenderEncoder for RenderCommandEncoder<'_> {
+    fn set_scissor_rect(&mut self, rect: &crate::ScissorRect) {
+        self.commands.push(Command::SetScissor { rect: rect.clone() });
+    }
+
+    fn set_viewport(&mut self, viewport: &crate::Viewport) {
+        self.commands.push(Command::SetViewport { viewport: viewport.clone() });
+    }
+
+    fn set_stencil_reference(&mut self, reference: u32) {
+        self.commands.push(Command::SetStencilReference { reference });
+    }
+}
+
+//=============================================================================
+// PipelineEncoder Implementation
+//=============================================================================
+
+impl ComputeCommandEncoder<'_> {
+    /// Bind a compute pipeline and return a pipeline encoder
+    pub fn with(&mut self, pipeline: &ComputePipeline) -> PipelineEncoder<'_> {
+        self.commands.push(Command::SetComputePipeline { key: pipeline.raw });
+
+        // TODO: Get group mappings from pipeline
+        // For now, use empty mappings - will be resolved at submit time
+        static EMPTY_MAPPINGS: &[ShaderDataMapping] = &[];
+
+        PipelineEncoder {
+            commands: self.commands,
+            plain_data: self.plain_data,
+            group_mappings: EMPTY_MAPPINGS,
+            limits: self.limits,
+        }
+    }
+}
+
+impl RenderCommandEncoder<'_> {
+    /// Bind a render pipeline and return a pipeline encoder
+    pub fn with(&mut self, pipeline: &RenderPipeline) -> PipelineEncoder<'_> {
+        self.commands.push(Command::SetRenderPipeline { key: pipeline.raw });
+
+        // TODO: Get group mappings from pipeline
+        // For now, use empty mappings - will be resolved at submit time
+        static EMPTY_MAPPINGS: &[ShaderDataMapping] = &[];
+
+        PipelineEncoder {
+            commands: self.commands,
+            plain_data: self.plain_data,
+            group_mappings: EMPTY_MAPPINGS,
+            limits: self.limits,
+        }
+    }
+}
+
+#[hidden_trait::expose]
+impl crate::traits::PipelineEncoder for PipelineEncoder<'_> {
+    fn bind<D: crate::ShaderData>(&mut self, group: u32, data: &D) {
+        let layout = D::layout();
+        let targets: Vec<SlotList> = layout
+            .bindings
+            .iter()
+            .enumerate()
+            .map(|(binding_index, _)| {
+                vec![BindingSlot {
+                    group,
+                    binding: binding_index as u32,
+                }]
+            })
+            .collect();
+
+        let mut ctx = PipelineContext {
+            commands: self.commands,
+            plain_data: self.plain_data,
+            targets: &targets,
+            limits: self.limits,
+        };
+
+        data.fill(ctx);
+    }
+}
+
+// PipelineEncoder also needs RenderEncoder for RenderPipelineEncoder bound
+#[hidden_trait::expose]
+impl crate::traits::RenderEncoder for PipelineEncoder<'_> {
+    fn set_scissor_rect(&mut self, rect: &crate::ScissorRect) {
+        self.commands.push(Command::SetScissor { rect: rect.clone() });
+    }
+
+    fn set_viewport(&mut self, viewport: &crate::Viewport) {
+        self.commands.push(Command::SetViewport { viewport: viewport.clone() });
+    }
+
+    fn set_stencil_reference(&mut self, reference: u32) {
+        self.commands.push(Command::SetStencilReference { reference });
+    }
+}
+
+#[hidden_trait::expose]
+impl crate::traits::ComputePipelineEncoder for PipelineEncoder<'_> {
+    type BufferPiece = crate::BufferPiece;
+
+    fn dispatch(&mut self, groups: [u32; 3]) {
+        self.commands.push(Command::Dispatch { groups });
+    }
+
+    fn dispatch_indirect(&mut self, indirect_buf: crate::BufferPiece) {
+        self.commands.push(Command::DispatchIndirect {
+            indirect_buffer: indirect_buf.into(),
+        });
+    }
+}
+
+#[hidden_trait::expose]
+impl crate::traits::RenderPipelineEncoder for PipelineEncoder<'_> {
+    type BufferPiece = crate::BufferPiece;
+
+    fn bind_vertex(&mut self, index: u32, vertex_buf: crate::BufferPiece) {
+        self.commands.push(Command::SetVertexBuffer {
+            slot: index,
+            buffer: vertex_buf.into(),
+        });
+    }
+
+    fn draw(
+        &mut self,
+        first_vertex: u32,
+        vertex_count: u32,
+        first_instance: u32,
+        instance_count: u32,
+    ) {
+        self.commands.push(Command::Draw {
+            first_vertex,
+            vertex_count,
+            first_instance,
+            instance_count,
+        });
+    }
+
+    fn draw_indexed(
+        &mut self,
+        index_buf: crate::BufferPiece,
+        index_type: crate::IndexType,
+        index_count: u32,
+        base_vertex: i32,
+        start_instance: u32,
+        instance_count: u32,
+    ) {
+        self.commands.push(Command::DrawIndexed {
+            index_buffer: index_buf.into(),
+            index_format: index_type,
+            index_count,
+            base_vertex,
+            first_instance: start_instance,
+            instance_count,
+        });
+    }
+
+    fn draw_indirect(&mut self, indirect_buf: crate::BufferPiece) {
+        self.commands.push(Command::DrawIndirect {
+            indirect_buffer: indirect_buf.into(),
+        });
+    }
+
+    fn draw_indexed_indirect(
+        &mut self,
+        index_buf: crate::BufferPiece,
+        index_type: crate::IndexType,
+        indirect_buf: crate::BufferPiece,
+    ) {
+        self.commands.push(Command::DrawIndexedIndirect {
+            index_buffer: index_buf.into(),
+            index_format: index_type,
+            indirect_buffer: indirect_buf.into(),
         });
     }
 }

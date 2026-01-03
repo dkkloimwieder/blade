@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering;
 // Texture Format Mapping
 //=============================================================================
 
-fn map_texture_format(format: crate::TextureFormat) -> wgpu::TextureFormat {
+pub(super) fn map_texture_format(format: crate::TextureFormat) -> wgpu::TextureFormat {
     match format {
         crate::TextureFormat::R8Unorm => wgpu::TextureFormat::R8Unorm,
         crate::TextureFormat::Rg8Unorm => wgpu::TextureFormat::Rg8Unorm,
