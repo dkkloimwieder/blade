@@ -295,6 +295,17 @@ pub(super) enum BindGroupEntry {
     },
 }
 
+impl BindGroupEntry {
+    fn binding_index(&self) -> u32 {
+        match self {
+            BindGroupEntry::Buffer { binding, .. } => *binding,
+            BindGroupEntry::Texture { binding, .. } => *binding,
+            BindGroupEntry::Sampler { binding, .. } => *binding,
+            BindGroupEntry::PlainData { binding, .. } => *binding,
+        }
+    }
+}
+
 //=============================================================================
 // Command Encoder
 //=============================================================================
@@ -878,8 +889,15 @@ impl<'a> ExecutionState<'a> {
         let entries = self.pending_bind_groups.get(&group_index)?;
         let layout = pipeline_entry.bind_group_layouts.get(group_index as usize)?;
 
-        let wgpu_entries: Vec<wgpu::BindGroupEntry> = entries
-            .iter()
+        // Deduplicate entries by binding index (keep last)
+        let mut seen = std::collections::HashSet::new();
+        let deduped: Vec<_> = entries.iter().rev()
+            .filter(|e| seen.insert(e.binding_index()))
+            .collect();
+
+        let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped
+            .into_iter()
+            .rev()
             .filter_map(|entry| self.make_bind_group_entry(entry))
             .collect();
 
@@ -890,6 +908,18 @@ impl<'a> ExecutionState<'a> {
         }))
     }
 
+    /// Flush all pending bind groups for render pass
+    fn flush_render_bind_groups(&mut self, render_pass: &mut wgpu::RenderPass) {
+        let group_indices: Vec<u32> = self.pending_bind_groups.keys().copied().collect();
+        for group_index in group_indices {
+            if let Some(bind_group) = self.create_render_bind_group(group_index) {
+                render_pass.set_bind_group(group_index, &bind_group, &[]);
+            }
+        }
+        // Clear pending bind groups after flushing
+        self.pending_bind_groups.clear();
+    }
+
     /// Create bind group from pending entries for a compute pipeline
     fn create_compute_bind_group(&self, group_index: u32) -> Option<wgpu::BindGroup> {
         let pipeline_key = self.compute_pipeline_key?;
@@ -897,8 +927,15 @@ impl<'a> ExecutionState<'a> {
         let entries = self.pending_bind_groups.get(&group_index)?;
         let layout = pipeline_entry.bind_group_layouts.get(group_index as usize)?;
 
-        let wgpu_entries: Vec<wgpu::BindGroupEntry> = entries
-            .iter()
+        // Deduplicate entries by binding index (keep last)
+        let mut seen = std::collections::HashSet::new();
+        let deduped: Vec<_> = entries.iter().rev()
+            .filter(|e| seen.insert(e.binding_index()))
+            .collect();
+
+        let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped
+            .into_iter()
+            .rev()
             .filter_map(|entry| self.make_bind_group_entry(entry))
             .collect();
 
@@ -907,6 +944,17 @@ impl<'a> ExecutionState<'a> {
             layout,
             entries: &wgpu_entries,
         }))
+    }
+
+    /// Flush all pending bind groups for compute pass
+    fn flush_compute_bind_groups(&mut self, compute_pass: &mut wgpu::ComputePass) {
+        let group_indices: Vec<u32> = self.pending_bind_groups.keys().copied().collect();
+        for group_index in group_indices {
+            if let Some(bind_group) = self.create_compute_bind_group(group_index) {
+                compute_pass.set_bind_group(group_index, &bind_group, &[]);
+            }
+        }
+        self.pending_bind_groups.clear();
     }
 
     /// Convert a BindGroupEntry to wgpu::BindGroupEntry
@@ -988,12 +1036,21 @@ impl Context {
                 Command::CopyBufferToTexture { src, bytes_per_row, dst, size } => {
                     let src_buf = &hub.buffers.get(src.key).expect("Invalid src buffer").gpu;
                     let dst_tex = &hub.textures.get(dst.key).expect("Invalid dst texture").gpu;
+                    // WebGPU requires bytes_per_row to be multiple of 256 for multi-row copies
+                    // For single-row copies, we can omit it or use the actual value
+                    let aligned_bpr = if size.height <= 1 && size.depth <= 1 {
+                        // Single row - can use None
+                        None
+                    } else {
+                        // Must be 256-aligned for multi-row copies
+                        Some((*bytes_per_row + 255) & !255)
+                    };
                     encoder.copy_buffer_to_texture(
                         wgpu::TexelCopyBufferInfo {
                             buffer: src_buf,
                             layout: wgpu::TexelCopyBufferLayout {
                                 offset: src.offset,
-                                bytes_per_row: Some(*bytes_per_row),
+                                bytes_per_row: aligned_bpr,
                                 rows_per_image: None,
                             },
                         },
@@ -1018,6 +1075,12 @@ impl Context {
                 Command::CopyTextureToBuffer { src, dst, bytes_per_row, size } => {
                     let src_tex = &hub.textures.get(src.key).expect("Invalid src texture").gpu;
                     let dst_buf = &hub.buffers.get(dst.key).expect("Invalid dst buffer").gpu;
+                    // WebGPU requires bytes_per_row to be multiple of 256 for multi-row copies
+                    let aligned_bpr = if size.height <= 1 && size.depth <= 1 {
+                        None
+                    } else {
+                        Some((*bytes_per_row + 255) & !255)
+                    };
                     encoder.copy_texture_to_buffer(
                         wgpu::TexelCopyTextureInfo {
                             texture: src_tex,
@@ -1033,7 +1096,7 @@ impl Context {
                             buffer: dst_buf,
                             layout: wgpu::TexelCopyBufferLayout {
                                 offset: dst.offset,
-                                bytes_per_row: Some(*bytes_per_row),
+                                bytes_per_row: aligned_bpr,
                                 rows_per_image: None,
                             },
                         },
@@ -1273,15 +1336,11 @@ impl Context {
                 }
 
                 Command::RecordBindGroup { group_index, entries } => {
-                    state.pending_bind_groups
+                    // Just accumulate entries - bind group created at draw time
+                    let group_entries = state.pending_bind_groups
                         .entry(*group_index)
-                        .or_insert_with(Vec::new)
-                        .extend(entries.iter().cloned());
-
-                    // Create and set bind group immediately
-                    if let Some(bind_group) = state.create_render_bind_group(*group_index) {
-                        render_pass.set_bind_group(*group_index, &bind_group, &[]);
-                    }
+                        .or_insert_with(Vec::new);
+                    group_entries.extend(entries.iter().cloned());
                 }
 
                 Command::Draw {
@@ -1290,6 +1349,8 @@ impl Context {
                     first_instance,
                     instance_count,
                 } => {
+                    // Flush pending bind groups before draw
+                    state.flush_render_bind_groups(&mut render_pass);
                     render_pass.draw(
                         *first_vertex..*first_vertex + *vertex_count,
                         *first_instance..*first_instance + *instance_count,
@@ -1304,6 +1365,7 @@ impl Context {
                     first_instance,
                     instance_count,
                 } => {
+                    state.flush_render_bind_groups(&mut render_pass);
                     if let Some(buf_entry) = hub.buffers.get(index_buffer.key) {
                         render_pass.set_index_buffer(
                             buf_entry.gpu.slice(index_buffer.offset..),
@@ -1318,6 +1380,7 @@ impl Context {
                 }
 
                 Command::DrawIndirect { indirect_buffer } => {
+                    state.flush_render_bind_groups(&mut render_pass);
                     if let Some(buf_entry) = hub.buffers.get(indirect_buffer.key) {
                         render_pass.draw_indirect(&buf_entry.gpu, indirect_buffer.offset);
                     }
@@ -1328,6 +1391,7 @@ impl Context {
                     index_format,
                     indirect_buffer,
                 } => {
+                    state.flush_render_bind_groups(&mut render_pass);
                     if let Some(idx_entry) = hub.buffers.get(index_buffer.key) {
                         if let Some(ind_entry) = hub.buffers.get(indirect_buffer.key) {
                             render_pass.set_index_buffer(
@@ -1372,22 +1436,20 @@ impl Context {
                 }
 
                 Command::RecordBindGroup { group_index, entries } => {
-                    state.pending_bind_groups
+                    // Just accumulate entries - bind group created at dispatch time
+                    let group_entries = state.pending_bind_groups
                         .entry(*group_index)
-                        .or_insert_with(Vec::new)
-                        .extend(entries.iter().cloned());
-
-                    // Create and set bind group immediately
-                    if let Some(bind_group) = state.create_compute_bind_group(*group_index) {
-                        compute_pass.set_bind_group(*group_index, &bind_group, &[]);
-                    }
+                        .or_insert_with(Vec::new);
+                    group_entries.extend(entries.iter().cloned());
                 }
 
                 Command::Dispatch { groups } => {
+                    state.flush_compute_bind_groups(&mut compute_pass);
                     compute_pass.dispatch_workgroups(groups[0], groups[1], groups[2]);
                 }
 
                 Command::DispatchIndirect { indirect_buffer } => {
+                    state.flush_compute_bind_groups(&mut compute_pass);
                     if let Some(buf_entry) = hub.buffers.get(indirect_buffer.key) {
                         compute_pass.dispatch_workgroups_indirect(
                             &buf_entry.gpu,

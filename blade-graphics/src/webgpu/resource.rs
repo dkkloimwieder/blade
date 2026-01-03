@@ -385,7 +385,8 @@ impl crate::traits::ResourceDevice for Context {
             lod_min_clamp: desc.lod_min_clamp,
             lod_max_clamp: desc.lod_max_clamp.unwrap_or(f32::MAX),
             compare,
-            anisotropy_clamp: desc.anisotropy_clamp.min(u16::MAX as u32) as u16,
+            // WebGPU requires anisotropy >= 1; use max(1) to ensure valid value
+            anisotropy_clamp: desc.anisotropy_clamp.max(1).min(u16::MAX as u32) as u16,
             border_color,
         });
 
