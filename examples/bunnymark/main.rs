@@ -70,11 +70,17 @@ impl Example {
                 depth: 1,
             },
             usage: gpu::TextureUsage::TARGET,
+            // WebGPU on web only supports FIFO/Auto present modes
+            #[cfg(all(target_arch = "wasm32", blade_wgpu))]
+            display_sync: gpu::DisplaySync::Block,
+            #[cfg(not(all(target_arch = "wasm32", blade_wgpu)))]
             display_sync: gpu::DisplaySync::Recent,
             ..Default::default()
         }
     }
 
+    /// Sync initialization for native and GLES WASM
+    #[cfg(not(all(target_arch = "wasm32", blade_wgpu)))]
     fn new(window: &winit::window::Window) -> Self {
         let context = unsafe {
             gpu::Context::init(gpu::ContextDesc {
@@ -87,6 +93,26 @@ impl Example {
             })
             .unwrap()
         };
+        Self::init_with_context(context, window)
+    }
+
+    /// Async initialization for WebGPU WASM
+    #[cfg(all(target_arch = "wasm32", blade_wgpu))]
+    async fn new_async(window: &winit::window::Window) -> Self {
+        let context = gpu::Context::init_async(gpu::ContextDesc {
+            presentation: true,
+            validation: cfg!(debug_assertions),
+            timing: false,
+            capture: false,
+            overlay: false, // overlay not supported on WASM
+            device_id: 0,
+        })
+        .await
+        .unwrap();
+        Self::init_with_context(context, window)
+    }
+
+    fn init_with_context(context: gpu::Context, window: &winit::window::Window) -> Self {
         println!("{:?}", context.device_information());
         let window_size = window.inner_size();
 
@@ -361,6 +387,8 @@ impl Example {
     }
 }
 
+/// Main for native and GLES WASM (sync init)
+#[cfg(not(all(target_arch = "wasm32", blade_wgpu)))]
 fn main() {
     #[cfg(not(target_arch = "wasm32"))]
     env_logger::init();
@@ -452,4 +480,82 @@ fn main() {
         .unwrap();
 
     example.deinit();
+}
+
+/// Main for WebGPU WASM (async init)
+#[cfg(all(target_arch = "wasm32", blade_wgpu))]
+fn main() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use winit::platform::web::WindowExtWebSys as _;
+
+    console_error_panic_hook::set_once();
+    console_log::init().expect("could not initialize logger");
+
+    let event_loop = winit::event_loop::EventLoop::new().unwrap();
+    let window_attributes =
+        winit::window::Window::default_attributes().with_title("blade-bunnymark");
+    let window = Rc::new(event_loop.create_window(window_attributes).unwrap());
+
+    // Set up canvas
+    let canvas = window.canvas().unwrap();
+    canvas.set_id(gpu::CANVAS_ID);
+    web_sys::window()
+        .and_then(|win| win.document())
+        .and_then(|doc| doc.body())
+        .and_then(|body| body.append_child(&web_sys::Element::from(canvas)).ok())
+        .expect("couldn't append canvas to document body");
+
+    // State machine: None = initializing, Some = ready
+    let example: Rc<RefCell<Option<Example>>> = Rc::new(RefCell::new(None));
+    let init_started: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+    let frame_count: Rc<RefCell<u32>> = Rc::new(RefCell::new(0));
+
+    let example_clone = example.clone();
+    let init_started_clone = init_started.clone();
+    let window_clone = window.clone();
+
+    event_loop
+        .run(move |event, target| {
+            target.set_control_flow(winit::event_loop::ControlFlow::Poll);
+            match event {
+                winit::event::Event::AboutToWait => {
+                    // Start async init on first frame
+                    if !*init_started_clone.borrow() {
+                        *init_started_clone.borrow_mut() = true;
+                        let example_init = example_clone.clone();
+                        let window_init = window_clone.clone();
+                        wasm_bindgen_futures::spawn_local(async move {
+                            let mut ex = Example::new_async(&window_init).await;
+                            // Pre-populate with bunnies
+                            ex.increase();
+                            ex.increase();
+                            *example_init.borrow_mut() = Some(ex);
+                            log::info!("WebGPU bunnymark initialized!");
+                        });
+                    }
+                    window.request_redraw();
+                }
+                winit::event::Event::WindowEvent { event, .. } => match event {
+                    winit::event::WindowEvent::Resized(size) => {
+                        if let Some(ref mut ex) = *example.borrow_mut() {
+                            ex.resize(size);
+                        }
+                    }
+                    winit::event::WindowEvent::CloseRequested => {
+                        target.exit();
+                    }
+                    winit::event::WindowEvent::RedrawRequested => {
+                        if let Some(ref mut ex) = *example.borrow_mut() {
+                            *frame_count.borrow_mut() += 1;
+                            ex.step(0.01);
+                            ex.render();
+                        }
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        })
+        .unwrap();
 }

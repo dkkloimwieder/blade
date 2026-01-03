@@ -98,7 +98,9 @@ del-geo = "=0.1.29"
 console_error_panic_hook = "0.1.7"
 console_log = "1"
 web-sys = { workspace = true, features = ["Window"] }
-getrandom = { version = "0.2", features = ["js"] }
+wasm-bindgen-futures = "0.4"
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dev-dependencies]
 renderdoc = "0.12"
