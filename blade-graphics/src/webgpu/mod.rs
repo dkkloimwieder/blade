@@ -13,7 +13,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
 use std::marker::PhantomData;
 
-pub use command::PipelineContext;
+pub use command::{
+    CommandEncoder, ComputeCommandEncoder, PassEncoder, PipelineContext, PipelineEncoder,
+    RenderCommandEncoder, TransferCommandEncoder,
+};
 pub use platform::PlatformError;
 
 //=============================================================================
@@ -206,6 +209,17 @@ pub struct Context {
 }
 
 impl Context {
+    /// Initialize a new WebGPU context.
+    ///
+    /// # Safety
+    ///
+    /// This is marked unsafe for API consistency with other backends.
+    /// WebGPU itself is safe.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub unsafe fn init(desc: crate::ContextDesc) -> Result<Self, crate::NotSupportedError> {
+        platform::create_context(&desc).map_err(|e| crate::NotSupportedError::Platform(e))
+    }
+
     /// Get device information
     pub fn info(&self) -> &crate::DeviceInformation {
         &self.device_information
@@ -274,6 +288,13 @@ pub struct Frame {
     target_size: [u16; 2],
     format: crate::TextureFormat,
 }
+
+// SAFETY: On WASM, WebGPU is inherently single-threaded, so Send+Sync are safe.
+// On native with wgpu, these types are already Send+Sync.
+#[cfg(target_arch = "wasm32")]
+unsafe impl Send for Frame {}
+#[cfg(target_arch = "wasm32")]
+unsafe impl Sync for Frame {}
 
 impl Frame {
     pub fn texture(&self) -> Texture {

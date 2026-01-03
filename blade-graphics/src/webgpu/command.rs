@@ -903,7 +903,7 @@ impl<'a> ExecutionState<'a> {
     }
 
     /// Convert a BindGroupEntry to wgpu::BindGroupEntry
-    fn make_bind_group_entry(&self, entry: &BindGroupEntry) -> Option<wgpu::BindGroupEntry> {
+    fn make_bind_group_entry(&self, entry: &BindGroupEntry) -> Option<wgpu::BindGroupEntry<'_>> {
         match entry {
             BindGroupEntry::Buffer { binding, buffer_key, offset, size } => {
                 let buffer_entry = self.hub.buffers.get(*buffer_key)?;

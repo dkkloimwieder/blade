@@ -70,7 +70,10 @@ pub mod derive;
     all(blade_wgpu, not(gles)),
     path = "webgpu/mod.rs"
 )]
-#[cfg_attr(any(gles, target_arch = "wasm32"), path = "gles/mod.rs")]
+#[cfg_attr(
+    all(any(gles, target_arch = "wasm32"), not(blade_wgpu)),
+    path = "gles/mod.rs"
+)]
 mod hal;
 mod shader;
 pub mod traits;
