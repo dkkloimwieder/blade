@@ -11,7 +11,7 @@ mod surface;
 use slotmap::{new_key_type, SlotMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
-use std::{marker::PhantomData, mem};
+use std::marker::PhantomData;
 
 pub use command::PipelineContext;
 pub use platform::PlatformError;

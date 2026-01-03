@@ -57,6 +57,11 @@ pub async fn create_context(
         .await
         .map_err(|e| PlatformError(format!("Device request failed: {}", e)))?;
 
+    // Set device lost callback for graceful error handling
+    device.set_device_lost_callback(|reason, message| {
+        log::error!("WebGPU device lost: {:?} - {}", reason, message);
+    });
+
     let adapter_info = adapter.get_info();
     let wgpu_limits: wgpu::Limits = device.limits();
 
@@ -112,6 +117,11 @@ pub fn create_context(
         },
     ))
     .map_err(|e| PlatformError(format!("Device request failed: {}", e)))?;
+
+    // Set device lost callback for graceful error handling
+    device.set_device_lost_callback(|reason, message| {
+        log::error!("WebGPU device lost: {:?} - {}", reason, message);
+    });
 
     let adapter_info = adapter.get_info();
     let wgpu_limits: wgpu::Limits = device.limits();

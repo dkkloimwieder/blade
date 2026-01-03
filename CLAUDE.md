@@ -135,6 +135,17 @@ bd sync                                  # Sync with git (run at session end)
 3. **Completing work**: `bd close` each issue with a reason
 4. **Session end**: `git pull --rebase && bd sync && git push`
 
+## Commit Signoff
+
+**ALWAYS sign off commits as `--kaalin`** at the end of the commit message. No other signoff or attribution.
+
+Example:
+```
+Commit message here.
+
+--kaalin
+```
+
 ## Key Files
 
 - `blade-graphics/src/lib.rs` - Public GPU API, types, traits

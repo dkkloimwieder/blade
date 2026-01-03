@@ -3,6 +3,7 @@
 //! Implements deferred command recording pattern following GLES backend.
 
 use super::*;
+use wgpu::util::DeviceExt;
 
 //=============================================================================
 // ShaderBindable Implementations
@@ -601,7 +602,7 @@ impl crate::traits::PipelineEncoder for PipelineEncoder<'_> {
             })
             .collect();
 
-        let mut ctx = PipelineContext {
+        let ctx = PipelineContext {
             commands: self.commands,
             plain_data: self.plain_data,
             targets: &targets,
@@ -756,7 +757,7 @@ impl crate::traits::CommandDevice for Context {
 
         // 3. Execute recorded commands
         let hub = self.hub.read().unwrap();
-        self.execute_commands(&hub, &mut cmd_encoder, &encoder.commands);
+        self.execute_commands(&hub, &mut cmd_encoder, &encoder.commands, &encoder.plain_data);
         drop(hub);
 
         // 4. Submit to queue
@@ -780,6 +781,170 @@ impl crate::traits::CommandDevice for Context {
     }
 }
 
+/// Map InitOp to wgpu LoadOp
+fn map_load_op(op: &crate::InitOp) -> wgpu::LoadOp<wgpu::Color> {
+    match op {
+        crate::InitOp::Load => wgpu::LoadOp::Load,
+        crate::InitOp::Clear(color) => {
+            let (r, g, b, a) = match color {
+                crate::TextureColor::TransparentBlack => (0.0, 0.0, 0.0, 0.0),
+                crate::TextureColor::OpaqueBlack => (0.0, 0.0, 0.0, 1.0),
+                crate::TextureColor::White => (1.0, 1.0, 1.0, 1.0),
+            };
+            wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a })
+        }
+        crate::InitOp::DontCare => wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+    }
+}
+
+/// Map InitOp to depth LoadOp (f32 clear value)
+fn map_depth_load_op(op: &crate::InitOp) -> wgpu::LoadOp<f32> {
+    match op {
+        crate::InitOp::Load => wgpu::LoadOp::Load,
+        crate::InitOp::Clear(_) => wgpu::LoadOp::Clear(1.0), // Depth typically cleared to 1.0
+        crate::InitOp::DontCare => wgpu::LoadOp::Clear(1.0),
+    }
+}
+
+/// Map InitOp to stencil LoadOp (u32 clear value)
+fn map_stencil_load_op(op: &crate::InitOp) -> wgpu::LoadOp<u32> {
+    match op {
+        crate::InitOp::Load => wgpu::LoadOp::Load,
+        crate::InitOp::Clear(_) => wgpu::LoadOp::Clear(0),
+        crate::InitOp::DontCare => wgpu::LoadOp::Clear(0),
+    }
+}
+
+/// Map FinishOp to wgpu StoreOp
+fn map_store_op(op: &crate::FinishOp) -> wgpu::StoreOp {
+    match op {
+        crate::FinishOp::Store => wgpu::StoreOp::Store,
+        crate::FinishOp::Discard => wgpu::StoreOp::Discard,
+        crate::FinishOp::ResolveTo(_) => wgpu::StoreOp::Store, // Resolve handled separately
+        crate::FinishOp::Ignore => wgpu::StoreOp::Discard,
+    }
+}
+
+/// Map IndexType to wgpu IndexFormat
+fn map_index_format(index_type: crate::IndexType) -> wgpu::IndexFormat {
+    match index_type {
+        crate::IndexType::U16 => wgpu::IndexFormat::Uint16,
+        crate::IndexType::U32 => wgpu::IndexFormat::Uint32,
+    }
+}
+
+/// Execution state for command processing
+struct ExecutionState<'a> {
+    /// Current render pipeline key (for bind group creation)
+    render_pipeline_key: Option<RenderPipelineKey>,
+    /// Current compute pipeline key
+    compute_pipeline_key: Option<ComputePipelineKey>,
+    /// Pending bind group entries per group index
+    pending_bind_groups: std::collections::HashMap<u32, Vec<BindGroupEntry>>,
+    /// Hub reference
+    hub: &'a Hub,
+    /// Device reference for creating bind groups
+    device: &'a wgpu::Device,
+    /// Queue reference for buffer uploads
+    queue: &'a wgpu::Queue,
+    /// Plain data buffer (for uniform data)
+    plain_data_buffer: Option<wgpu::Buffer>,
+}
+
+impl<'a> ExecutionState<'a> {
+    fn new(hub: &'a Hub, device: &'a wgpu::Device, queue: &'a wgpu::Queue) -> Self {
+        Self {
+            render_pipeline_key: None,
+            compute_pipeline_key: None,
+            pending_bind_groups: std::collections::HashMap::new(),
+            hub,
+            device,
+            queue,
+            plain_data_buffer: None,
+        }
+    }
+
+    /// Create bind group from pending entries for a render pipeline
+    fn create_render_bind_group(&self, group_index: u32) -> Option<wgpu::BindGroup> {
+        let pipeline_key = self.render_pipeline_key?;
+        let pipeline_entry = self.hub.render_pipelines.get(pipeline_key)?;
+        let entries = self.pending_bind_groups.get(&group_index)?;
+        let layout = pipeline_entry.bind_group_layouts.get(group_index as usize)?;
+
+        let wgpu_entries: Vec<wgpu::BindGroupEntry> = entries
+            .iter()
+            .filter_map(|entry| self.make_bind_group_entry(entry))
+            .collect();
+
+        Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout,
+            entries: &wgpu_entries,
+        }))
+    }
+
+    /// Create bind group from pending entries for a compute pipeline
+    fn create_compute_bind_group(&self, group_index: u32) -> Option<wgpu::BindGroup> {
+        let pipeline_key = self.compute_pipeline_key?;
+        let pipeline_entry = self.hub.compute_pipelines.get(pipeline_key)?;
+        let entries = self.pending_bind_groups.get(&group_index)?;
+        let layout = pipeline_entry.bind_group_layouts.get(group_index as usize)?;
+
+        let wgpu_entries: Vec<wgpu::BindGroupEntry> = entries
+            .iter()
+            .filter_map(|entry| self.make_bind_group_entry(entry))
+            .collect();
+
+        Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout,
+            entries: &wgpu_entries,
+        }))
+    }
+
+    /// Convert a BindGroupEntry to wgpu::BindGroupEntry
+    fn make_bind_group_entry(&self, entry: &BindGroupEntry) -> Option<wgpu::BindGroupEntry> {
+        match entry {
+            BindGroupEntry::Buffer { binding, buffer_key, offset, size } => {
+                let buffer_entry = self.hub.buffers.get(*buffer_key)?;
+                Some(wgpu::BindGroupEntry {
+                    binding: *binding,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffer_entry.gpu,
+                        offset: *offset,
+                        size: std::num::NonZeroU64::new(*size),
+                    }),
+                })
+            }
+            BindGroupEntry::Texture { binding, view_key } => {
+                let view = self.hub.texture_views.get(*view_key)?;
+                Some(wgpu::BindGroupEntry {
+                    binding: *binding,
+                    resource: wgpu::BindingResource::TextureView(view),
+                })
+            }
+            BindGroupEntry::Sampler { binding, sampler_key } => {
+                let sampler = self.hub.samplers.get(*sampler_key)?;
+                Some(wgpu::BindGroupEntry {
+                    binding: *binding,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                })
+            }
+            BindGroupEntry::PlainData { binding, offset, size } => {
+                let buffer = self.plain_data_buffer.as_ref()?;
+                Some(wgpu::BindGroupEntry {
+                    binding: *binding,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer,
+                        offset: *offset as u64,
+                        size: std::num::NonZeroU64::new(*size as u64),
+                    }),
+                })
+            }
+        }
+    }
+}
+
 impl Context {
     /// Execute recorded commands on a wgpu command encoder
     fn execute_commands(
@@ -787,12 +952,25 @@ impl Context {
         hub: &Hub,
         encoder: &mut wgpu::CommandEncoder,
         commands: &[Command],
+        plain_data: &[u8],
     ) {
-        let mut render_pass: Option<wgpu::RenderPass<'_>> = None;
-        let mut compute_pass: Option<wgpu::ComputePass<'_>> = None;
+        // Create plain data buffer if needed
+        let plain_data_buffer = if !plain_data.is_empty() {
+            Some(self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Plain Data Buffer"),
+                contents: plain_data,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            }))
+        } else {
+            None
+        };
 
-        for cmd in commands {
-            match cmd {
+        let mut state = ExecutionState::new(hub, &self.device, &self.queue);
+        state.plain_data_buffer = plain_data_buffer;
+
+        let mut i = 0;
+        while i < commands.len() {
+            match &commands[i] {
                 // Transfer commands (executed directly on encoder)
                 Command::CopyBufferToBuffer { src, dst, size } => {
                     let src_buf = &hub.buffers.get(src.key).expect("Invalid src buffer").gpu;
@@ -893,69 +1071,325 @@ impl Context {
                 }
 
                 Command::FillBuffer { dst, size, value } => {
-                    // WebGPU has clear_buffer but only for 0 value
-                    // For non-zero values, we need to write a staging buffer
                     let dst_buf = &hub.buffers.get(dst.key).expect("Invalid dst buffer").gpu;
                     if *value == 0 {
                         encoder.clear_buffer(dst_buf, dst.offset, Some(*size));
                     } else {
-                        // For non-zero fill, create and write staging data
                         let fill_data = vec![*value; *size as usize];
                         self.queue.write_buffer(dst_buf, dst.offset, &fill_data);
                     }
                 }
 
                 Command::InitTexture { key: _ } => {
-                    // WebGPU textures are zeroed on creation, no init needed
+                    // WebGPU textures are zeroed on creation
                 }
 
-                // Render pass management
-                Command::BeginRenderPass { color_attachments: _, depth_attachment: _ } => {
-                    // TODO: Implement render pass creation
-                    // This requires resolving texture views and creating wgpu render pass
+                // Render pass - find the matching EndRenderPass and execute as a block
+                Command::BeginRenderPass { color_attachments, depth_attachment } => {
+                    // Find EndRenderPass
+                    let end_idx = commands[i..]
+                        .iter()
+                        .position(|c| matches!(c, Command::EndRenderPass))
+                        .map(|p| i + p)
+                        .unwrap_or(commands.len());
+
+                    // Execute render pass
+                    self.execute_render_pass(
+                        hub,
+                        encoder,
+                        &commands[i + 1..end_idx],
+                        color_attachments,
+                        depth_attachment.as_ref(),
+                        &mut state,
+                    );
+
+                    // Skip to after EndRenderPass
+                    i = end_idx;
                 }
 
                 Command::EndRenderPass => {
-                    if let Some(pass) = render_pass.take() {
-                        drop(pass);
-                    }
+                    // Handled by BeginRenderPass block
                 }
 
-                // Compute pass management
+                // Compute pass - find the matching EndComputePass and execute as a block
                 Command::BeginComputePass => {
-                    // TODO: Create compute pass
+                    // Find EndComputePass
+                    let end_idx = commands[i..]
+                        .iter()
+                        .position(|c| matches!(c, Command::EndComputePass))
+                        .map(|p| i + p)
+                        .unwrap_or(commands.len());
+
+                    // Execute compute pass
+                    self.execute_compute_pass(
+                        hub,
+                        encoder,
+                        &commands[i + 1..end_idx],
+                        &mut state,
+                    );
+
+                    // Skip to after EndComputePass
+                    i = end_idx;
                 }
 
                 Command::EndComputePass => {
-                    if let Some(pass) = compute_pass.take() {
-                        drop(pass);
-                    }
+                    // Handled by BeginComputePass block
                 }
 
-                // Render commands (require render_pass)
-                Command::SetRenderPipeline { key: _ } |
-                Command::SetViewport { viewport: _ } |
-                Command::SetScissor { rect: _ } |
-                Command::SetStencilReference { reference: _ } |
-                Command::SetVertexBuffer { slot: _, buffer: _ } |
-                Command::SetBindGroup { index: _, bind_group_id: _ } |
+                // These should be inside passes - skip if encountered at top level
+                Command::SetRenderPipeline { .. } |
+                Command::SetViewport { .. } |
+                Command::SetScissor { .. } |
+                Command::SetStencilReference { .. } |
+                Command::SetVertexBuffer { .. } |
+                Command::SetBindGroup { .. } |
                 Command::Draw { .. } |
                 Command::DrawIndexed { .. } |
                 Command::DrawIndirect { .. } |
-                Command::DrawIndexedIndirect { .. } => {
-                    // TODO: Implement render pass commands
+                Command::DrawIndexedIndirect { .. } |
+                Command::SetComputePipeline { .. } |
+                Command::Dispatch { .. } |
+                Command::DispatchIndirect { .. } |
+                Command::RecordBindGroup { .. } => {
+                    // These are handled inside pass execution
+                }
+            }
+            i += 1;
+        }
+    }
+
+    /// Execute a render pass
+    fn execute_render_pass(
+        &self,
+        hub: &Hub,
+        encoder: &mut wgpu::CommandEncoder,
+        commands: &[Command],
+        color_attachments: &[RenderColorAttachment],
+        depth_attachment: Option<&RenderDepthAttachment>,
+        state: &mut ExecutionState,
+    ) {
+        // Build color attachments for wgpu
+        let wgpu_color_attachments: Vec<Option<wgpu::RenderPassColorAttachment>> = color_attachments
+            .iter()
+            .map(|ca| {
+                // Try to get view from frame_view first, then from hub
+                let view: &wgpu::TextureView = if let Some(ref frame_view) = ca.frame_view {
+                    frame_view.as_ref()
+                } else {
+                    hub.texture_views.get(ca.view_key)?
+                };
+
+                Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None, // TODO: Handle ResolveTo
+                    ops: wgpu::Operations {
+                        load: map_load_op(&ca.load_op),
+                        store: map_store_op(&ca.store_op),
+                    },
+                    depth_slice: None, // wgpu v28 requires this field
+                })
+            })
+            .collect();
+
+        // Build depth stencil attachment
+        let wgpu_depth_attachment = depth_attachment.and_then(|da| {
+            let view = hub.texture_views.get(da.view_key)?;
+            Some(wgpu::RenderPassDepthStencilAttachment {
+                view,
+                depth_ops: Some(wgpu::Operations {
+                    load: map_depth_load_op(&da.depth_load_op),
+                    store: map_store_op(&da.depth_store_op),
+                }),
+                stencil_ops: Some(wgpu::Operations {
+                    load: map_stencil_load_op(&da.stencil_load_op),
+                    store: map_store_op(&da.stencil_store_op),
+                }),
+            })
+        });
+
+        // Create render pass
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &wgpu_color_attachments,
+            depth_stencil_attachment: wgpu_depth_attachment,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None, // wgpu v28 requires this field
+        });
+
+        // Clear pending bind groups for this pass
+        state.pending_bind_groups.clear();
+        state.render_pipeline_key = None;
+
+        // Execute commands
+        for cmd in commands {
+            match cmd {
+                Command::SetRenderPipeline { key } => {
+                    state.render_pipeline_key = Some(*key);
+                    if let Some(pipeline) = hub.render_pipelines.get(*key) {
+                        render_pass.set_pipeline(&pipeline.raw);
+                    }
                 }
 
-                // Compute commands (require compute_pass)
-                Command::SetComputePipeline { key: _ } |
-                Command::Dispatch { groups: _ } |
-                Command::DispatchIndirect { indirect_buffer: _ } => {
-                    // TODO: Implement compute pass commands
+                Command::SetViewport { viewport } => {
+                    render_pass.set_viewport(
+                        viewport.x,
+                        viewport.y,
+                        viewport.w,
+                        viewport.h,
+                        viewport.depth.start,
+                        viewport.depth.end,
+                    );
                 }
 
-                Command::RecordBindGroup { group_index: _, entries: _ } => {
-                    // TODO: Build bind groups during submit
+                Command::SetScissor { rect } => {
+                    // ScissorRect has i32 for x/y, wgpu wants u32
+                    render_pass.set_scissor_rect(
+                        rect.x.max(0) as u32,
+                        rect.y.max(0) as u32,
+                        rect.w,
+                        rect.h,
+                    );
                 }
+
+                Command::SetStencilReference { reference } => {
+                    render_pass.set_stencil_reference(*reference);
+                }
+
+                Command::SetVertexBuffer { slot, buffer } => {
+                    if let Some(buf_entry) = hub.buffers.get(buffer.key) {
+                        render_pass.set_vertex_buffer(
+                            *slot,
+                            buf_entry.gpu.slice(buffer.offset..),
+                        );
+                    }
+                }
+
+                Command::RecordBindGroup { group_index, entries } => {
+                    state.pending_bind_groups
+                        .entry(*group_index)
+                        .or_insert_with(Vec::new)
+                        .extend(entries.iter().cloned());
+
+                    // Create and set bind group immediately
+                    if let Some(bind_group) = state.create_render_bind_group(*group_index) {
+                        render_pass.set_bind_group(*group_index, &bind_group, &[]);
+                    }
+                }
+
+                Command::Draw {
+                    first_vertex,
+                    vertex_count,
+                    first_instance,
+                    instance_count,
+                } => {
+                    render_pass.draw(
+                        *first_vertex..*first_vertex + *vertex_count,
+                        *first_instance..*first_instance + *instance_count,
+                    );
+                }
+
+                Command::DrawIndexed {
+                    index_buffer,
+                    index_format,
+                    index_count,
+                    base_vertex,
+                    first_instance,
+                    instance_count,
+                } => {
+                    if let Some(buf_entry) = hub.buffers.get(index_buffer.key) {
+                        render_pass.set_index_buffer(
+                            buf_entry.gpu.slice(index_buffer.offset..),
+                            map_index_format(*index_format),
+                        );
+                        render_pass.draw_indexed(
+                            0..*index_count,
+                            *base_vertex,
+                            *first_instance..*first_instance + *instance_count,
+                        );
+                    }
+                }
+
+                Command::DrawIndirect { indirect_buffer } => {
+                    if let Some(buf_entry) = hub.buffers.get(indirect_buffer.key) {
+                        render_pass.draw_indirect(&buf_entry.gpu, indirect_buffer.offset);
+                    }
+                }
+
+                Command::DrawIndexedIndirect {
+                    index_buffer,
+                    index_format,
+                    indirect_buffer,
+                } => {
+                    if let Some(idx_entry) = hub.buffers.get(index_buffer.key) {
+                        if let Some(ind_entry) = hub.buffers.get(indirect_buffer.key) {
+                            render_pass.set_index_buffer(
+                                idx_entry.gpu.slice(index_buffer.offset..),
+                                map_index_format(*index_format),
+                            );
+                            render_pass.draw_indexed_indirect(&ind_entry.gpu, indirect_buffer.offset);
+                        }
+                    }
+                }
+
+                _ => {} // Ignore non-render commands
+            }
+        }
+    }
+
+    /// Execute a compute pass
+    fn execute_compute_pass(
+        &self,
+        hub: &Hub,
+        encoder: &mut wgpu::CommandEncoder,
+        commands: &[Command],
+        state: &mut ExecutionState,
+    ) {
+        let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: None,
+        });
+
+        // Clear pending bind groups for this pass
+        state.pending_bind_groups.clear();
+        state.compute_pipeline_key = None;
+
+        // Execute commands
+        for cmd in commands {
+            match cmd {
+                Command::SetComputePipeline { key } => {
+                    state.compute_pipeline_key = Some(*key);
+                    if let Some(pipeline) = hub.compute_pipelines.get(*key) {
+                        compute_pass.set_pipeline(&pipeline.raw);
+                    }
+                }
+
+                Command::RecordBindGroup { group_index, entries } => {
+                    state.pending_bind_groups
+                        .entry(*group_index)
+                        .or_insert_with(Vec::new)
+                        .extend(entries.iter().cloned());
+
+                    // Create and set bind group immediately
+                    if let Some(bind_group) = state.create_compute_bind_group(*group_index) {
+                        compute_pass.set_bind_group(*group_index, &bind_group, &[]);
+                    }
+                }
+
+                Command::Dispatch { groups } => {
+                    compute_pass.dispatch_workgroups(groups[0], groups[1], groups[2]);
+                }
+
+                Command::DispatchIndirect { indirect_buffer } => {
+                    if let Some(buf_entry) = hub.buffers.get(indirect_buffer.key) {
+                        compute_pass.dispatch_workgroups_indirect(
+                            &buf_entry.gpu,
+                            indirect_buffer.offset,
+                        );
+                    }
+                }
+
+                _ => {} // Ignore non-compute commands
             }
         }
     }
