@@ -445,3 +445,236 @@ impl<P> Drop for PassEncoder<'_, P> {
         }
     }
 }
+
+//=============================================================================
+// CommandDevice Implementation
+//=============================================================================
+
+#[hidden_trait::expose]
+impl crate::traits::CommandDevice for Context {
+    type CommandEncoder = CommandEncoder;
+    type SyncPoint = SyncPoint;
+
+    fn create_command_encoder(&self, desc: crate::CommandEncoderDesc) -> CommandEncoder {
+        CommandEncoder::new(desc.name.to_string(), self.limits.clone())
+    }
+
+    fn destroy_command_encoder(&self, _encoder: &mut CommandEncoder) {
+        // No explicit cleanup needed - Rust drops automatically
+    }
+
+    fn submit(&self, encoder: &mut CommandEncoder) -> SyncPoint {
+        // 1. Sync all dirty shadow buffers to GPU
+        self.sync_dirty_buffers();
+
+        // 2. Create wgpu command encoder
+        let mut cmd_encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some(&encoder.name),
+        });
+
+        // 3. Execute recorded commands
+        let hub = self.hub.read().unwrap();
+        self.execute_commands(&hub, &mut cmd_encoder, &encoder.commands);
+        drop(hub);
+
+        // 4. Submit to queue
+        let submission_index = self.queue.submit(std::iter::once(cmd_encoder.finish()));
+
+        // 5. Present frames
+        for frame in encoder.present_frames.drain(..) {
+            frame.texture.present();
+        }
+
+        SyncPoint { submission_index }
+    }
+
+    fn wait_for(&self, sp: &SyncPoint, timeout_ms: u32) -> bool {
+        // wgpu v28: use PollType::Wait with submission_index
+        let timeout = std::time::Duration::from_millis(timeout_ms as u64);
+        self.device.poll(wgpu::PollType::Wait {
+            submission_index: Some(sp.submission_index.clone()),
+            timeout: Some(timeout),
+        }).is_ok()
+    }
+}
+
+impl Context {
+    /// Execute recorded commands on a wgpu command encoder
+    fn execute_commands(
+        &self,
+        hub: &Hub,
+        encoder: &mut wgpu::CommandEncoder,
+        commands: &[Command],
+    ) {
+        let mut render_pass: Option<wgpu::RenderPass<'_>> = None;
+        let mut compute_pass: Option<wgpu::ComputePass<'_>> = None;
+
+        for cmd in commands {
+            match cmd {
+                // Transfer commands (executed directly on encoder)
+                Command::CopyBufferToBuffer { src, dst, size } => {
+                    let src_buf = &hub.buffers.get(src.key).expect("Invalid src buffer").gpu;
+                    let dst_buf = &hub.buffers.get(dst.key).expect("Invalid dst buffer").gpu;
+                    encoder.copy_buffer_to_buffer(src_buf, src.offset, dst_buf, dst.offset, *size);
+                }
+
+                Command::CopyBufferToTexture { src, bytes_per_row, dst, size } => {
+                    let src_buf = &hub.buffers.get(src.key).expect("Invalid src buffer").gpu;
+                    let dst_tex = &hub.textures.get(dst.key).expect("Invalid dst texture").gpu;
+                    encoder.copy_buffer_to_texture(
+                        wgpu::TexelCopyBufferInfo {
+                            buffer: src_buf,
+                            layout: wgpu::TexelCopyBufferLayout {
+                                offset: src.offset,
+                                bytes_per_row: Some(*bytes_per_row),
+                                rows_per_image: None,
+                            },
+                        },
+                        wgpu::TexelCopyTextureInfo {
+                            texture: dst_tex,
+                            mip_level: dst.mip_level,
+                            origin: wgpu::Origin3d {
+                                x: dst.origin[0],
+                                y: dst.origin[1],
+                                z: dst.origin[2],
+                            },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::Extent3d {
+                            width: size.width,
+                            height: size.height,
+                            depth_or_array_layers: size.depth,
+                        },
+                    );
+                }
+
+                Command::CopyTextureToBuffer { src, dst, bytes_per_row, size } => {
+                    let src_tex = &hub.textures.get(src.key).expect("Invalid src texture").gpu;
+                    let dst_buf = &hub.buffers.get(dst.key).expect("Invalid dst buffer").gpu;
+                    encoder.copy_texture_to_buffer(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: src_tex,
+                            mip_level: src.mip_level,
+                            origin: wgpu::Origin3d {
+                                x: src.origin[0],
+                                y: src.origin[1],
+                                z: src.origin[2],
+                            },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::TexelCopyBufferInfo {
+                            buffer: dst_buf,
+                            layout: wgpu::TexelCopyBufferLayout {
+                                offset: dst.offset,
+                                bytes_per_row: Some(*bytes_per_row),
+                                rows_per_image: None,
+                            },
+                        },
+                        wgpu::Extent3d {
+                            width: size.width,
+                            height: size.height,
+                            depth_or_array_layers: size.depth,
+                        },
+                    );
+                }
+
+                Command::CopyTextureToTexture { src, dst, size } => {
+                    let src_tex = &hub.textures.get(src.key).expect("Invalid src texture").gpu;
+                    let dst_tex = &hub.textures.get(dst.key).expect("Invalid dst texture").gpu;
+                    encoder.copy_texture_to_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: src_tex,
+                            mip_level: src.mip_level,
+                            origin: wgpu::Origin3d {
+                                x: src.origin[0],
+                                y: src.origin[1],
+                                z: src.origin[2],
+                            },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::TexelCopyTextureInfo {
+                            texture: dst_tex,
+                            mip_level: dst.mip_level,
+                            origin: wgpu::Origin3d {
+                                x: dst.origin[0],
+                                y: dst.origin[1],
+                                z: dst.origin[2],
+                            },
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::Extent3d {
+                            width: size.width,
+                            height: size.height,
+                            depth_or_array_layers: size.depth,
+                        },
+                    );
+                }
+
+                Command::FillBuffer { dst, size, value } => {
+                    // WebGPU has clear_buffer but only for 0 value
+                    // For non-zero values, we need to write a staging buffer
+                    let dst_buf = &hub.buffers.get(dst.key).expect("Invalid dst buffer").gpu;
+                    if *value == 0 {
+                        encoder.clear_buffer(dst_buf, dst.offset, Some(*size));
+                    } else {
+                        // For non-zero fill, create and write staging data
+                        let fill_data = vec![*value; *size as usize];
+                        self.queue.write_buffer(dst_buf, dst.offset, &fill_data);
+                    }
+                }
+
+                Command::InitTexture { key: _ } => {
+                    // WebGPU textures are zeroed on creation, no init needed
+                }
+
+                // Render pass management
+                Command::BeginRenderPass { color_attachments: _, depth_attachment: _ } => {
+                    // TODO: Implement render pass creation
+                    // This requires resolving texture views and creating wgpu render pass
+                }
+
+                Command::EndRenderPass => {
+                    if let Some(pass) = render_pass.take() {
+                        drop(pass);
+                    }
+                }
+
+                // Compute pass management
+                Command::BeginComputePass => {
+                    // TODO: Create compute pass
+                }
+
+                Command::EndComputePass => {
+                    if let Some(pass) = compute_pass.take() {
+                        drop(pass);
+                    }
+                }
+
+                // Render commands (require render_pass)
+                Command::SetRenderPipeline { key: _ } |
+                Command::SetViewport { viewport: _ } |
+                Command::SetScissor { rect: _ } |
+                Command::SetStencilReference { reference: _ } |
+                Command::SetVertexBuffer { slot: _, buffer: _ } |
+                Command::SetBindGroup { index: _, bind_group_id: _ } |
+                Command::Draw { .. } |
+                Command::DrawIndexed { .. } |
+                Command::DrawIndirect { .. } |
+                Command::DrawIndexedIndirect { .. } => {
+                    // TODO: Implement render pass commands
+                }
+
+                // Compute commands (require compute_pass)
+                Command::SetComputePipeline { key: _ } |
+                Command::Dispatch { groups: _ } |
+                Command::DispatchIndirect { indirect_buffer: _ } => {
+                    // TODO: Implement compute pass commands
+                }
+
+                Command::RecordBindGroup { group_index: _, entries: _ } => {
+                    // TODO: Build bind groups during submit
+                }
+            }
+        }
+    }
+}
