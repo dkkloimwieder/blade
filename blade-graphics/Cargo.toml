@@ -126,6 +126,8 @@ js-sys = "0.3.60"
 [target.'cfg(blade_wgpu)'.dependencies]
 slotmap = { workspace = true }
 wgpu = { workspace = true }
+# Need wgsl-out to emit modified naga module with bindings back to WGSL
+naga = { workspace = true, features = ["wgsl-out"] }
 
 [target.'cfg(all(blade_wgpu, not(target_arch = "wasm32")))'.dependencies]
 pollster = { workspace = true }

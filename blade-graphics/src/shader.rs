@@ -149,7 +149,10 @@ impl super::Shader {
                 _ => continue,
             };
 
-            assert_eq!(var.binding, None);
+            // Skip if already bound (e.g., from processing another entry point)
+            if var.binding.is_some() {
+                continue;
+            }
             let var_name = var.name.as_ref().unwrap();
             for (group_index, (&layout, info)) in
                 group_layouts.iter().zip(sd_infos.iter_mut()).enumerate()

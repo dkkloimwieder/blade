@@ -278,32 +278,51 @@ impl Context {
         vertex_fetch_states: &[crate::VertexFetchState],
     ) -> CompiledShader {
         let ep_index = sf.entry_point_index();
-        let ep = &sf.shader.module.entry_points[ep_index];
-        let ep_info = sf.shader.info.get_entry_point(ep_index);
 
-        let (mut module, _module_info) = sf.shader.resolve_constants(&sf.constants);
-        crate::Shader::fill_resource_bindings(
-            &mut module,
-            group_infos,
-            ep.stage,
-            ep_info,
-            group_layouts,
-        );
+        let (mut module, module_info) = sf.shader.resolve_constants(&sf.constants);
+        let wg_size = module.entry_points[ep_index].workgroup_size;
+
+        // Collect entry point stages before mutable borrow
+        let ep_stages: Vec<naga::ShaderStage> = module
+            .entry_points
+            .iter()
+            .map(|ep| ep.stage)
+            .collect();
+
+        // Process ALL entry points to ensure all resource variables have bindings
+        // (wgpu compiles the entire module, not just one entry point)
+        for (ep_idx, &stage) in ep_stages.iter().enumerate() {
+            let ep_info = module_info.get_entry_point(ep_idx);
+            crate::Shader::fill_resource_bindings(
+                &mut module,
+                group_infos,
+                stage,
+                ep_info,
+                group_layouts,
+            );
+        }
+
         let attribute_mappings =
             crate::Shader::fill_vertex_locations(&mut module, ep_index, vertex_fetch_states);
 
-        // wgpu accepts WGSL directly - reconstruct source with bindings
-        // For now, use the original source (bindings are resolved at naga level)
+        // Emit the modified module back to WGSL with @group/@binding annotations
+        let wgsl_source = naga::back::wgsl::write_string(
+            &module,
+            &module_info,
+            naga::back::wgsl::WriterFlags::empty(),
+        )
+        .expect("Failed to emit WGSL from modified naga module");
+
         let wgpu_module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(sf.entry_point),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(&sf.shader.source)),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(wgsl_source)),
         });
 
         CompiledShader {
             module: wgpu_module,
             entry_point: sf.entry_point.to_string(),
             attribute_mappings,
-            wg_size: ep.workgroup_size,
+            wg_size,
         }
     }
 }
