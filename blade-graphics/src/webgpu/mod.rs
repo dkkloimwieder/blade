@@ -203,7 +203,8 @@ pub struct Context {
     device: wgpu::Device,
     queue: wgpu::Queue,
     /// RwLock allows concurrent read access during command recording
-    hub: RwLock<Hub>,
+    /// Arc-wrapped so Surface can share access for frame view management
+    hub: std::sync::Arc<RwLock<Hub>>,
     device_information: crate::DeviceInformation,
     limits: Limits,
 }
@@ -281,6 +282,8 @@ pub struct Surface {
     raw: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     format: crate::TextureFormat,
+    /// Shared hub reference for frame view management
+    hub: std::sync::Arc<RwLock<Hub>>,
 }
 
 impl Surface {
@@ -295,8 +298,7 @@ impl Surface {
 #[derive(Debug)]
 pub struct Frame {
     texture: wgpu::SurfaceTexture,
-    view: wgpu::TextureView,
-    /// Key for the temporary view in hub (if needed for binding)
+    /// Key for the frame's texture view in the hub
     view_key: Option<TextureViewKey>,
     target_size: [u16; 2],
     format: crate::TextureFormat,

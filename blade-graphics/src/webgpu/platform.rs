@@ -70,7 +70,7 @@ pub async fn create_context(
         adapter,
         device,
         queue,
-        hub: RwLock::new(Hub::new()),
+        hub: std::sync::Arc::new(RwLock::new(Hub::new())),
         device_information: crate::DeviceInformation {
             device_name: adapter_info.name,
             driver_name: adapter_info.driver,
@@ -131,7 +131,7 @@ pub fn create_context(
         adapter,
         device,
         queue,
-        hub: RwLock::new(Hub::new()),
+        hub: std::sync::Arc::new(RwLock::new(Hub::new())),
         device_information: crate::DeviceInformation {
             device_name: adapter_info.name,
             driver_name: adapter_info.driver,

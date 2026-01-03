@@ -82,6 +82,7 @@ impl Context {
             raw: surface,
             config,
             format: blade_format,
+            hub: self.hub.clone(),
         })
     }
 
@@ -160,23 +161,25 @@ impl Context {
             raw: surface,
             config,
             format: blade_format,
+            hub: self.hub.clone(),
         })
     }
 
     /// Reconfigure a surface with new dimensions and settings
+    ///
+    /// Note: The texture format is determined at surface creation based on
+    /// adapter capabilities. We don't change the format here to ensure
+    /// compatibility across browsers (Firefox only supports rgba8unorm).
     pub fn reconfigure_surface(&self, surface: &mut Surface, config: crate::SurfaceConfig) {
-        let format = map_color_space_to_format(config.color_space);
-        let wgpu_format = map_texture_format(format);
-
         surface.config.width = config.size.width;
         surface.config.height = config.size.height;
-        surface.config.format = wgpu_format;
+        // Keep the format that was detected as supported during surface creation
+        // Don't override: Firefox WebGPU doesn't support bgra8unorm-srgb
         surface.config.present_mode = match config.display_sync {
             crate::DisplaySync::Block => wgpu::PresentMode::Fifo,
             crate::DisplaySync::Recent => wgpu::PresentMode::Mailbox,
             crate::DisplaySync::Tear => wgpu::PresentMode::Immediate,
         };
-        surface.format = format;
 
         surface.raw.configure(&self.device, &surface.config);
     }
@@ -200,6 +203,9 @@ impl Surface {
     }
 
     /// Acquire the next frame to render to
+    ///
+    /// The frame's texture view is stored in the hub so it can be used
+    /// in render passes. It will be removed when the frame is presented.
     pub fn acquire_frame(&self) -> Frame {
         let texture = self.raw.get_current_texture().expect("Failed to acquire frame");
         let view = texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -208,10 +214,12 @@ impl Surface {
             self.config.height.min(u16::MAX as u32) as u16,
         ];
 
+        // Store view in hub so render pass can look it up by key
+        let view_key = self.hub.write().unwrap().texture_views.insert(view);
+
         Frame {
             texture,
-            view,
-            view_key: None,
+            view_key: Some(view_key),
             target_size: size,
             format: self.format,
         }

@@ -763,9 +763,16 @@ impl crate::traits::CommandDevice for Context {
         // 4. Submit to queue
         let submission_index = self.queue.submit(std::iter::once(cmd_encoder.finish()));
 
-        // 5. Present frames
-        for frame in encoder.present_frames.drain(..) {
-            frame.texture.present();
+        // 5. Present frames and cleanup their views from hub
+        {
+            let mut hub = self.hub.write().unwrap();
+            for frame in encoder.present_frames.drain(..) {
+                // Remove frame view from hub (it was added in acquire_frame)
+                if let Some(view_key) = frame.view_key {
+                    hub.texture_views.remove(view_key);
+                }
+                frame.texture.present();
+            }
         }
 
         SyncPoint { submission_index }
