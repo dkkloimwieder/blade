@@ -194,6 +194,239 @@ impl Hub {
 }
 
 //=============================================================================
+// Bind Group Cache with Leak Prevention
+//=============================================================================
+
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
+
+/// Key for bind group cache - identifies a unique combination of resources
+#[derive(Clone, Debug)]
+pub(super) struct BindGroupCacheKey {
+    /// Pipeline key (render or compute) for layout lookup
+    pipeline_key: PipelineKey,
+    /// Group index within the pipeline
+    group_index: u32,
+    /// Sorted list of resource bindings
+    bindings: Vec<ResourceBinding>,
+}
+
+impl PartialEq for BindGroupCacheKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.pipeline_key == other.pipeline_key
+            && self.group_index == other.group_index
+            && self.bindings == other.bindings
+    }
+}
+
+impl Eq for BindGroupCacheKey {}
+
+impl Hash for BindGroupCacheKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.pipeline_key.hash(state);
+        self.group_index.hash(state);
+        self.bindings.hash(state);
+    }
+}
+
+/// Identifies either a render or compute pipeline
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+pub(super) enum PipelineKey {
+    Render(RenderPipelineKey),
+    Compute(ComputePipelineKey),
+}
+
+/// A resource bound to a bind group
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(super) enum ResourceBinding {
+    Buffer { binding: u32, key: BufferKey, offset: u64, size: u64 },
+    TextureView { binding: u32, key: TextureViewKey },
+    Sampler { binding: u32, key: SamplerKey },
+    /// Uniform data from plain_data buffer (ephemeral, keyed by content hash)
+    PlainData { binding: u32, offset: u32, size: u32 },
+}
+
+/// Tracks which BindGroups depend on which resources
+struct DependencyTracker {
+    /// Buffer -> Set of BindGroupCacheKeys that use it
+    buffer_deps: HashMap<BufferKey, HashSet<BindGroupCacheKey>>,
+    /// TextureView -> Set of BindGroupCacheKeys that use it
+    texture_view_deps: HashMap<TextureViewKey, HashSet<BindGroupCacheKey>>,
+    /// Sampler -> Set of BindGroupCacheKeys that use it
+    sampler_deps: HashMap<SamplerKey, HashSet<BindGroupCacheKey>>,
+}
+
+impl DependencyTracker {
+    fn new() -> Self {
+        Self {
+            buffer_deps: HashMap::new(),
+            texture_view_deps: HashMap::new(),
+            sampler_deps: HashMap::new(),
+        }
+    }
+
+    /// Register that a bind group uses these resources
+    fn register(&mut self, cache_key: &BindGroupCacheKey) {
+        for binding in &cache_key.bindings {
+            match binding {
+                ResourceBinding::Buffer { key, .. } => {
+                    self.buffer_deps
+                        .entry(*key)
+                        .or_default()
+                        .insert(cache_key.clone());
+                }
+                ResourceBinding::TextureView { key, .. } => {
+                    self.texture_view_deps
+                        .entry(*key)
+                        .or_default()
+                        .insert(cache_key.clone());
+                }
+                ResourceBinding::Sampler { key, .. } => {
+                    self.sampler_deps
+                        .entry(*key)
+                        .or_default()
+                        .insert(cache_key.clone());
+                }
+                ResourceBinding::PlainData { .. } => {
+                    // Ephemeral, not tracked
+                }
+            }
+        }
+    }
+
+    /// Get all bind groups that depend on a buffer
+    fn get_buffer_dependents(&self, key: BufferKey) -> Option<&HashSet<BindGroupCacheKey>> {
+        self.buffer_deps.get(&key)
+    }
+
+    /// Remove tracking for a buffer (called after invalidation)
+    fn remove_buffer(&mut self, key: BufferKey) {
+        self.buffer_deps.remove(&key);
+    }
+
+    /// Get all bind groups that depend on a texture view
+    fn get_texture_view_dependents(&self, key: TextureViewKey) -> Option<&HashSet<BindGroupCacheKey>> {
+        self.texture_view_deps.get(&key)
+    }
+
+    fn remove_texture_view(&mut self, key: TextureViewKey) {
+        self.texture_view_deps.remove(&key);
+    }
+
+    fn get_sampler_dependents(&self, key: SamplerKey) -> Option<&HashSet<BindGroupCacheKey>> {
+        self.sampler_deps.get(&key)
+    }
+
+    fn remove_sampler(&mut self, key: SamplerKey) {
+        self.sampler_deps.remove(&key);
+    }
+}
+
+/// LRU cache for bind groups with dependency tracking
+pub(super) struct BindGroupCache {
+    /// Map from cache key to wgpu bind group
+    groups: HashMap<BindGroupCacheKey, wgpu::BindGroup>,
+    /// Dependency tracking for invalidation
+    deps: DependencyTracker,
+    /// Maximum cache size before LRU eviction
+    max_size: usize,
+    /// Access order for LRU (most recent at back)
+    access_order: Vec<BindGroupCacheKey>,
+    /// Cache stats
+    hits: u64,
+    misses: u64,
+}
+
+impl BindGroupCache {
+    fn new(max_size: usize) -> Self {
+        Self {
+            groups: HashMap::new(),
+            deps: DependencyTracker::new(),
+            max_size,
+            access_order: Vec::new(),
+            hits: 0,
+            misses: 0,
+        }
+    }
+
+    /// Get cached bind group or create a new one
+    pub fn get_or_create<F>(&mut self, key: BindGroupCacheKey, create_fn: F) -> &wgpu::BindGroup
+    where
+        F: FnOnce() -> wgpu::BindGroup,
+    {
+        if self.groups.contains_key(&key) {
+            // Cache hit - update LRU order
+            self.hits += 1;
+            self.access_order.retain(|k| k != &key);
+            self.access_order.push(key.clone());
+            return self.groups.get(&key).unwrap();
+        }
+
+        // Cache miss - create new bind group
+        self.misses += 1;
+        let bind_group = create_fn();
+
+        // Register dependencies BEFORE inserting
+        self.deps.register(&key);
+
+        // Evict if over capacity
+        while self.groups.len() >= self.max_size {
+            self.evict_lru();
+        }
+
+        self.access_order.push(key.clone());
+        self.groups.insert(key.clone(), bind_group);
+        self.groups.get(&key).unwrap()
+    }
+
+    /// CRITICAL: Called when a buffer is destroyed
+    /// Must be called BEFORE removing from Hub to ensure bind groups are dropped first
+    pub fn invalidate_buffer(&mut self, key: BufferKey) {
+        if let Some(dependents) = self.deps.get_buffer_dependents(key).cloned() {
+            for cache_key in dependents {
+                self.groups.remove(&cache_key);
+                self.access_order.retain(|k| k != &cache_key);
+            }
+        }
+        self.deps.remove_buffer(key);
+    }
+
+    /// Called when a texture view is destroyed
+    pub fn invalidate_texture_view(&mut self, key: TextureViewKey) {
+        if let Some(dependents) = self.deps.get_texture_view_dependents(key).cloned() {
+            for cache_key in dependents {
+                self.groups.remove(&cache_key);
+                self.access_order.retain(|k| k != &cache_key);
+            }
+        }
+        self.deps.remove_texture_view(key);
+    }
+
+    /// Called when a sampler is destroyed
+    pub fn invalidate_sampler(&mut self, key: SamplerKey) {
+        if let Some(dependents) = self.deps.get_sampler_dependents(key).cloned() {
+            for cache_key in dependents {
+                self.groups.remove(&cache_key);
+                self.access_order.retain(|k| k != &cache_key);
+            }
+        }
+        self.deps.remove_sampler(key);
+    }
+
+    fn evict_lru(&mut self) {
+        if let Some(oldest) = self.access_order.first().cloned() {
+            self.groups.remove(&oldest);
+            self.access_order.remove(0);
+        }
+    }
+
+    /// Get cache statistics
+    pub fn stats(&self) -> (u64, u64, usize) {
+        (self.hits, self.misses, self.groups.len())
+    }
+}
+
+//=============================================================================
 // Context
 //=============================================================================
 
@@ -207,6 +440,8 @@ pub struct Context {
     hub: std::sync::Arc<RwLock<Hub>>,
     device_information: crate::DeviceInformation,
     limits: Limits,
+    /// Cache for bind groups to avoid recreation
+    bind_group_cache: RwLock<BindGroupCache>,
 }
 
 impl Context {

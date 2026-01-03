@@ -65,6 +65,9 @@ pub async fn create_context(
     let adapter_info = adapter.get_info();
     let wgpu_limits: wgpu::Limits = device.limits();
 
+    // Max cache size: 1024 bind groups should be plenty for most apps
+    const BIND_GROUP_CACHE_SIZE: usize = 1024;
+
     Ok(Context {
         instance,
         adapter,
@@ -81,6 +84,7 @@ pub async fn create_context(
             uniform_buffer_alignment: wgpu_limits.min_uniform_buffer_offset_alignment,
             max_bind_groups: wgpu_limits.max_bind_groups,
         },
+        bind_group_cache: RwLock::new(BindGroupCache::new(BIND_GROUP_CACHE_SIZE)),
     })
 }
 
@@ -126,6 +130,9 @@ pub fn create_context(
     let adapter_info = adapter.get_info();
     let wgpu_limits: wgpu::Limits = device.limits();
 
+    // Max cache size: 1024 bind groups should be plenty for most apps
+    const BIND_GROUP_CACHE_SIZE: usize = 1024;
+
     Ok(Context {
         instance,
         adapter,
@@ -142,5 +149,6 @@ pub fn create_context(
             uniform_buffer_alignment: wgpu_limits.min_uniform_buffer_offset_alignment,
             max_bind_groups: wgpu_limits.max_bind_groups,
         },
+        bind_group_cache: RwLock::new(BindGroupCache::new(BIND_GROUP_CACHE_SIZE)),
     })
 }

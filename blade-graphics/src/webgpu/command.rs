@@ -272,7 +272,7 @@ pub(super) struct RenderDepthAttachment {
 }
 
 /// Bind group entry for deferred binding
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub(super) enum BindGroupEntry {
     Buffer {
         binding: u32,
@@ -766,9 +766,11 @@ impl crate::traits::CommandDevice for Context {
             label: Some(&encoder.name),
         });
 
-        // 3. Execute recorded commands
+        // 3. Execute recorded commands with bind group cache
         let hub = self.hub.read().unwrap();
-        self.execute_commands(&hub, &mut cmd_encoder, &encoder.commands, &encoder.plain_data);
+        let mut cache = self.bind_group_cache.write().unwrap();
+        self.execute_commands(&hub, &mut cache, &mut cmd_encoder, &encoder.commands, &encoder.plain_data);
+        drop(cache);
         drop(hub);
 
         // 4. Submit to queue
@@ -864,13 +866,16 @@ struct ExecutionState<'a> {
     /// Device reference for creating bind groups
     device: &'a wgpu::Device,
     /// Queue reference for buffer uploads
+    #[allow(dead_code)]
     queue: &'a wgpu::Queue,
     /// Plain data buffer (for uniform data)
     plain_data_buffer: Option<wgpu::Buffer>,
+    /// Bind group cache reference
+    cache: &'a mut BindGroupCache,
 }
 
 impl<'a> ExecutionState<'a> {
-    fn new(hub: &'a Hub, device: &'a wgpu::Device, queue: &'a wgpu::Queue) -> Self {
+    fn new(hub: &'a Hub, device: &'a wgpu::Device, queue: &'a wgpu::Queue, cache: &'a mut BindGroupCache) -> Self {
         Self {
             render_pipeline_key: None,
             compute_pipeline_key: None,
@@ -879,123 +884,255 @@ impl<'a> ExecutionState<'a> {
             device,
             queue,
             plain_data_buffer: None,
+            cache,
         }
     }
 
-    /// Create bind group from pending entries for a render pipeline
-    fn create_render_bind_group(&self, group_index: u32) -> Option<wgpu::BindGroup> {
-        let pipeline_key = self.render_pipeline_key?;
-        let pipeline_entry = self.hub.render_pipelines.get(pipeline_key)?;
-        let entries = self.pending_bind_groups.get(&group_index)?;
-        let layout = pipeline_entry.bind_group_layouts.get(group_index as usize)?;
-
-        // Deduplicate entries by binding index (keep last)
-        let mut seen = std::collections::HashSet::new();
-        let deduped: Vec<_> = entries.iter().rev()
-            .filter(|e| seen.insert(e.binding_index()))
-            .collect();
-
-        let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped
-            .into_iter()
-            .rev()
-            .filter_map(|entry| self.make_bind_group_entry(entry))
-            .collect();
-
-        Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout,
-            entries: &wgpu_entries,
-        }))
-    }
-
-    /// Flush all pending bind groups for render pass
-    fn flush_render_bind_groups(&mut self, render_pass: &mut wgpu::RenderPass) {
-        let group_indices: Vec<u32> = self.pending_bind_groups.keys().copied().collect();
-        for group_index in group_indices {
-            if let Some(bind_group) = self.create_render_bind_group(group_index) {
-                render_pass.set_bind_group(group_index, &bind_group, &[]);
-            }
-        }
-        // Clear pending bind groups after flushing
-        self.pending_bind_groups.clear();
-    }
-
-    /// Create bind group from pending entries for a compute pipeline
-    fn create_compute_bind_group(&self, group_index: u32) -> Option<wgpu::BindGroup> {
-        let pipeline_key = self.compute_pipeline_key?;
-        let pipeline_entry = self.hub.compute_pipelines.get(pipeline_key)?;
-        let entries = self.pending_bind_groups.get(&group_index)?;
-        let layout = pipeline_entry.bind_group_layouts.get(group_index as usize)?;
-
-        // Deduplicate entries by binding index (keep last)
-        let mut seen = std::collections::HashSet::new();
-        let deduped: Vec<_> = entries.iter().rev()
-            .filter(|e| seen.insert(e.binding_index()))
-            .collect();
-
-        let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped
-            .into_iter()
-            .rev()
-            .filter_map(|entry| self.make_bind_group_entry(entry))
-            .collect();
-
-        Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout,
-            entries: &wgpu_entries,
-        }))
-    }
-
-    /// Flush all pending bind groups for compute pass
-    fn flush_compute_bind_groups(&mut self, compute_pass: &mut wgpu::ComputePass) {
-        let group_indices: Vec<u32> = self.pending_bind_groups.keys().copied().collect();
-        for group_index in group_indices {
-            if let Some(bind_group) = self.create_compute_bind_group(group_index) {
-                compute_pass.set_bind_group(group_index, &bind_group, &[]);
-            }
-        }
-        self.pending_bind_groups.clear();
-    }
-
-    /// Convert a BindGroupEntry to wgpu::BindGroupEntry
-    fn make_bind_group_entry(&self, entry: &BindGroupEntry) -> Option<wgpu::BindGroupEntry<'_>> {
+    /// Convert BindGroupEntry to ResourceBinding for cache key
+    fn entry_to_binding(entry: &BindGroupEntry) -> ResourceBinding {
         match entry {
             BindGroupEntry::Buffer { binding, buffer_key, offset, size } => {
-                let buffer_entry = self.hub.buffers.get(*buffer_key)?;
-                Some(wgpu::BindGroupEntry {
-                    binding: *binding,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &buffer_entry.gpu,
-                        offset: *offset,
-                        size: std::num::NonZeroU64::new(*size),
-                    }),
-                })
+                ResourceBinding::Buffer { binding: *binding, key: *buffer_key, offset: *offset, size: *size }
             }
             BindGroupEntry::Texture { binding, view_key } => {
-                let view = self.hub.texture_views.get(*view_key)?;
-                Some(wgpu::BindGroupEntry {
-                    binding: *binding,
-                    resource: wgpu::BindingResource::TextureView(view),
-                })
+                ResourceBinding::TextureView { binding: *binding, key: *view_key }
             }
             BindGroupEntry::Sampler { binding, sampler_key } => {
-                let sampler = self.hub.samplers.get(*sampler_key)?;
-                Some(wgpu::BindGroupEntry {
-                    binding: *binding,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                })
+                ResourceBinding::Sampler { binding: *binding, key: *sampler_key }
             }
             BindGroupEntry::PlainData { binding, offset, size } => {
-                let buffer = self.plain_data_buffer.as_ref()?;
-                Some(wgpu::BindGroupEntry {
-                    binding: *binding,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer,
-                        offset: *offset as u64,
-                        size: std::num::NonZeroU64::new(*size as u64),
-                    }),
-                })
+                ResourceBinding::PlainData { binding: *binding, offset: *offset, size: *size }
             }
+        }
+    }
+
+    /// Flush all pending bind groups for render pass using cache
+    fn flush_render_bind_groups(&mut self, render_pass: &mut wgpu::RenderPass) {
+        let pipeline_key = match self.render_pipeline_key {
+            Some(k) => k,
+            None => {
+                self.pending_bind_groups.clear();
+                return;
+            }
+        };
+
+        let pipeline_entry = match self.hub.render_pipelines.get(pipeline_key) {
+            Some(e) => e,
+            None => {
+                self.pending_bind_groups.clear();
+                return;
+            }
+        };
+
+        let group_indices: Vec<u32> = self.pending_bind_groups.keys().copied().collect();
+
+        for group_index in group_indices {
+            let entries = match self.pending_bind_groups.get(&group_index) {
+                Some(e) => e,
+                None => continue,
+            };
+
+            let layout = match pipeline_entry.bind_group_layouts.get(group_index as usize) {
+                Some(l) => l,
+                None => continue,
+            };
+
+            // Deduplicate entries by binding index (keep last)
+            let mut seen = std::collections::HashSet::new();
+            let deduped: Vec<_> = entries.iter().rev()
+                .filter(|e| seen.insert(e.binding_index()))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+
+            // Check if any entry is PlainData - those can't be cached
+            // because the plain_data buffer is recreated each frame
+            let has_plain_data = deduped.iter().any(|e| matches!(e, BindGroupEntry::PlainData { .. }));
+
+            let hub = self.hub;
+            let device = self.device;
+            let plain_data_buffer = &self.plain_data_buffer;
+
+            if has_plain_data {
+                // Don't cache - create bind group directly
+                let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped.iter()
+                    .filter_map(|entry| make_bind_group_entry(entry, hub, plain_data_buffer.as_ref()))
+                    .collect();
+
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Ephemeral Render BindGroup"),
+                    layout,
+                    entries: &wgpu_entries,
+                });
+
+                render_pass.set_bind_group(group_index, &bind_group, &[]);
+            } else {
+                // Build cache key from deduped entries
+                let bindings: Vec<ResourceBinding> = deduped.iter()
+                    .map(|e| Self::entry_to_binding(e))
+                    .collect();
+
+                let cache_key = BindGroupCacheKey {
+                    pipeline_key: PipelineKey::Render(pipeline_key),
+                    group_index,
+                    bindings,
+                };
+
+                let bind_group = self.cache.get_or_create(cache_key, || {
+                    let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped.iter()
+                        .filter_map(|entry| make_bind_group_entry(entry, hub, plain_data_buffer.as_ref()))
+                        .collect();
+
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("Cached Render BindGroup"),
+                        layout,
+                        entries: &wgpu_entries,
+                    })
+                });
+
+                render_pass.set_bind_group(group_index, bind_group, &[]);
+            }
+        }
+
+        self.pending_bind_groups.clear();
+    }
+
+    /// Flush all pending bind groups for compute pass using cache
+    fn flush_compute_bind_groups(&mut self, compute_pass: &mut wgpu::ComputePass) {
+        let pipeline_key = match self.compute_pipeline_key {
+            Some(k) => k,
+            None => {
+                self.pending_bind_groups.clear();
+                return;
+            }
+        };
+
+        let pipeline_entry = match self.hub.compute_pipelines.get(pipeline_key) {
+            Some(e) => e,
+            None => {
+                self.pending_bind_groups.clear();
+                return;
+            }
+        };
+
+        let group_indices: Vec<u32> = self.pending_bind_groups.keys().copied().collect();
+
+        for group_index in group_indices {
+            let entries = match self.pending_bind_groups.get(&group_index) {
+                Some(e) => e,
+                None => continue,
+            };
+
+            let layout = match pipeline_entry.bind_group_layouts.get(group_index as usize) {
+                Some(l) => l,
+                None => continue,
+            };
+
+            // Deduplicate entries by binding index (keep last)
+            let mut seen = std::collections::HashSet::new();
+            let deduped: Vec<_> = entries.iter().rev()
+                .filter(|e| seen.insert(e.binding_index()))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+
+            // Check if any entry is PlainData - those can't be cached
+            // because the plain_data buffer is recreated each frame
+            let has_plain_data = deduped.iter().any(|e| matches!(e, BindGroupEntry::PlainData { .. }));
+
+            let hub = self.hub;
+            let device = self.device;
+            let plain_data_buffer = &self.plain_data_buffer;
+
+            if has_plain_data {
+                // Don't cache - create bind group directly
+                let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped.iter()
+                    .filter_map(|entry| make_bind_group_entry(entry, hub, plain_data_buffer.as_ref()))
+                    .collect();
+
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Ephemeral Compute BindGroup"),
+                    layout,
+                    entries: &wgpu_entries,
+                });
+
+                compute_pass.set_bind_group(group_index, &bind_group, &[]);
+            } else {
+                // Build cache key from deduped entries
+                let bindings: Vec<ResourceBinding> = deduped.iter()
+                    .map(|e| Self::entry_to_binding(e))
+                    .collect();
+
+                let cache_key = BindGroupCacheKey {
+                    pipeline_key: PipelineKey::Compute(pipeline_key),
+                    group_index,
+                    bindings,
+                };
+
+                let bind_group = self.cache.get_or_create(cache_key, || {
+                    let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped.iter()
+                        .filter_map(|entry| make_bind_group_entry(entry, hub, plain_data_buffer.as_ref()))
+                        .collect();
+
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("Cached Compute BindGroup"),
+                        layout,
+                        entries: &wgpu_entries,
+                    })
+                });
+
+                compute_pass.set_bind_group(group_index, bind_group, &[]);
+            }
+        }
+
+        self.pending_bind_groups.clear();
+    }
+}
+
+/// Convert a BindGroupEntry to wgpu::BindGroupEntry (standalone function for use in closures)
+fn make_bind_group_entry<'a>(
+    entry: &BindGroupEntry,
+    hub: &'a Hub,
+    plain_data_buffer: Option<&'a wgpu::Buffer>,
+) -> Option<wgpu::BindGroupEntry<'a>> {
+    match entry {
+        BindGroupEntry::Buffer { binding, buffer_key, offset, size } => {
+            let buffer_entry = hub.buffers.get(*buffer_key)?;
+            Some(wgpu::BindGroupEntry {
+                binding: *binding,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &buffer_entry.gpu,
+                    offset: *offset,
+                    size: std::num::NonZeroU64::new(*size),
+                }),
+            })
+        }
+        BindGroupEntry::Texture { binding, view_key } => {
+            let view = hub.texture_views.get(*view_key)?;
+            Some(wgpu::BindGroupEntry {
+                binding: *binding,
+                resource: wgpu::BindingResource::TextureView(view),
+            })
+        }
+        BindGroupEntry::Sampler { binding, sampler_key } => {
+            let sampler = hub.samplers.get(*sampler_key)?;
+            Some(wgpu::BindGroupEntry {
+                binding: *binding,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            })
+        }
+        BindGroupEntry::PlainData { binding, offset, size } => {
+            let buffer = plain_data_buffer?;
+            Some(wgpu::BindGroupEntry {
+                binding: *binding,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer,
+                    offset: *offset as u64,
+                    size: std::num::NonZeroU64::new(*size as u64),
+                }),
+            })
         }
     }
 }
@@ -1005,6 +1142,7 @@ impl Context {
     fn execute_commands(
         &self,
         hub: &Hub,
+        cache: &mut BindGroupCache,
         encoder: &mut wgpu::CommandEncoder,
         commands: &[Command],
         plain_data: &[u8],
@@ -1020,7 +1158,7 @@ impl Context {
             None
         };
 
-        let mut state = ExecutionState::new(hub, &self.device, &self.queue);
+        let mut state = ExecutionState::new(hub, &self.device, &self.queue, cache);
         state.plain_data_buffer = plain_data_buffer;
 
         let mut i = 0;

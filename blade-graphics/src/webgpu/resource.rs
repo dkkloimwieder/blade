@@ -228,6 +228,13 @@ impl crate::traits::ResourceDevice for Context {
     }
 
     fn destroy_buffer(&self, buffer: Buffer) {
+        // CRITICAL: Invalidate cached bind groups FIRST
+        // This drops Arc references before we remove from Hub
+        {
+            let mut cache = self.bind_group_cache.write().unwrap();
+            cache.invalidate_buffer(buffer.raw);
+        }
+
         let mut hub = self.hub.write().unwrap();
         if let Some(entry) = hub.buffers.remove(buffer.raw) {
             // GPU buffer is dropped automatically
@@ -351,6 +358,12 @@ impl crate::traits::ResourceDevice for Context {
     }
 
     fn destroy_texture_view(&self, view: TextureView) {
+        // CRITICAL: Invalidate cached bind groups FIRST
+        {
+            let mut cache = self.bind_group_cache.write().unwrap();
+            cache.invalidate_texture_view(view.raw);
+        }
+
         let mut hub = self.hub.write().unwrap();
         hub.texture_views.remove(view.raw);
     }
@@ -399,6 +412,12 @@ impl crate::traits::ResourceDevice for Context {
     }
 
     fn destroy_sampler(&self, sampler: Sampler) {
+        // CRITICAL: Invalidate cached bind groups FIRST
+        {
+            let mut cache = self.bind_group_cache.write().unwrap();
+            cache.invalidate_sampler(sampler.raw);
+        }
+
         let mut hub = self.hub.write().unwrap();
         hub.samplers.remove(sampler.raw);
     }
