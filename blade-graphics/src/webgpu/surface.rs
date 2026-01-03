@@ -87,13 +87,27 @@ impl Context {
 
     /// Create a surface from a window handle (WASM version)
     ///
-    /// On WASM, this attempts to extract an HtmlCanvasElement from the raw-window-handle.
-    /// For direct canvas access, use `create_surface_from_canvas` instead.
+    /// On WASM, this auto-discovers the canvas element with ID matching `CANVAS_ID` ("blade").
+    /// For explicit canvas access, use `create_surface_from_canvas` instead.
     #[cfg(target_arch = "wasm32")]
     pub fn create_surface<I>(&self, _window: &I) -> Result<Surface, crate::NotSupportedError> {
-        // raw-window-handle on WASM doesn't reliably provide canvas access
-        // Users should call create_surface_from_canvas directly
-        Err(crate::NotSupportedError::PlatformNotSupported)
+        use wasm_bindgen::JsCast;
+
+        // Auto-discover canvas with the expected ID
+        let canvas = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.get_element_by_id(crate::CANVAS_ID))
+            .ok_or_else(|| {
+                log::error!("Canvas element with id '{}' not found", crate::CANVAS_ID);
+                crate::NotSupportedError::PlatformNotSupported
+            })?
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .map_err(|_| {
+                log::error!("Element '{}' is not a canvas", crate::CANVAS_ID);
+                crate::NotSupportedError::PlatformNotSupported
+            })?;
+
+        self.create_surface_from_canvas(canvas)
     }
 
     /// Create a surface from an HTML canvas element (WASM only)
@@ -165,6 +179,14 @@ impl Context {
         surface.format = format;
 
         surface.raw.configure(&self.device, &surface.config);
+    }
+
+    /// Destroy a surface.
+    ///
+    /// In WebGPU/wgpu, surfaces are automatically cleaned up when dropped,
+    /// so this is a no-op.
+    pub fn destroy_surface(&self, _surface: &mut Surface) {
+        // wgpu::Surface is dropped automatically
     }
 }
 

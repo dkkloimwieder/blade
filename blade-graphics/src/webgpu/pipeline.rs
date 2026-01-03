@@ -178,6 +178,13 @@ fn map_blend_factor(factor: crate::BlendFactor) -> wgpu::BlendFactor {
         crate::BlendFactor::SrcAlphaSaturated => wgpu::BlendFactor::SrcAlphaSaturated,
         crate::BlendFactor::Constant => wgpu::BlendFactor::Constant,
         crate::BlendFactor::OneMinusConstant => wgpu::BlendFactor::OneMinusConstant,
+        // Dual-source blending is not supported in WebGPU base spec
+        crate::BlendFactor::Src1
+        | crate::BlendFactor::OneMinusSrc1
+        | crate::BlendFactor::Src1Alpha
+        | crate::BlendFactor::OneMinusSrc1Alpha => {
+            panic!("Dual-source blending (Src1 variants) not supported in WebGPU")
+        }
     }
 }
 

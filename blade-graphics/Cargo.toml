@@ -114,8 +114,11 @@ libloading = { version = "0.8" }
 [target.'cfg(all(target_arch = "wasm32"))'.dependencies]
 wasm-bindgen = "0.2.83"
 web-sys = { workspace = true, features = [
+    "Document",
+    "Element",
     "HtmlCanvasElement",
     "WebGl2RenderingContext",
+    "Window",
 ] }
 js-sys = "0.3.60"
 
@@ -138,5 +141,19 @@ allowed_external_types = [
     "raw_window_handle::*",
 ]
 
+# Example dependencies
+[dev-dependencies]
+env_logger = "0.11"
+winit = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+console_error_panic_hook = "0.1.7"
+console_log = "1"
+wasm-bindgen-futures = "0.4"
+
+[[example]]
+name = "webgpu-triangle"
+required-features = []
+
 [lints.rust]
-unexpected_cfgs = { level = "allow", check-cfg = ['cfg(gles)', 'cfg(webgpu)'] }
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(gles)', 'cfg(webgpu)', 'cfg(blade_wgpu)'] }

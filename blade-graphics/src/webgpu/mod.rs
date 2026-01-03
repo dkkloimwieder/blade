@@ -209,7 +209,7 @@ pub struct Context {
 }
 
 impl Context {
-    /// Initialize a new WebGPU context.
+    /// Initialize a new WebGPU context (native).
     ///
     /// # Safety
     ///
@@ -220,8 +220,19 @@ impl Context {
         platform::create_context(&desc).map_err(|e| crate::NotSupportedError::Platform(e))
     }
 
+    /// Initialize a new WebGPU context asynchronously (WASM).
+    ///
+    /// On WASM, WebGPU initialization is inherently async due to browser APIs.
+    /// Use this method instead of `init()` for WASM targets.
+    #[cfg(target_arch = "wasm32")]
+    pub async fn init_async(desc: crate::ContextDesc) -> Result<Self, crate::NotSupportedError> {
+        platform::create_context(&desc)
+            .await
+            .map_err(|e| crate::NotSupportedError::Platform(e))
+    }
+
     /// Get device information
-    pub fn info(&self) -> &crate::DeviceInformation {
+    pub fn device_information(&self) -> &crate::DeviceInformation {
         &self.device_information
     }
 
@@ -232,6 +243,8 @@ impl Context {
             ray_query: crate::ShaderVisibility::empty(),
             // WebGPU supports 1 and 4 samples typically
             sample_count_mask: 0b0101, // 1 and 4
+            // WebGPU doesn't support dual-source blending in the base spec
+            dual_source_blending: false,
         }
     }
 
