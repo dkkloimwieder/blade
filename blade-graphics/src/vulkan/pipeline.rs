@@ -28,6 +28,8 @@ impl super::Context {
                         binding_map.insert(
                             rb,
                             spv::BindingInfo {
+                                descriptor_set: group_index as u32,
+                                binding: binding_index as u32,
                                 binding_array_size: Some(count),
                             },
                         );
@@ -44,11 +46,14 @@ impl super::Context {
                 None => (1, 3),
             },
             flags: self.naga_flags,
+            fake_missing_bindings: false,
             binding_map,
             capabilities: None,
             bounds_check_policies: naga::proc::BoundsCheckPolicies::default(),
             zero_initialize_workgroup_memory: spv::ZeroInitializeWorkgroupMemoryMode::None,
             force_loop_bounding: false,
+            ray_query_initialization_tracking: false,
+            use_storage_input_output_16: false,
             debug_info: None,
         }
     }
@@ -96,7 +101,7 @@ impl super::Context {
             naga_options_debug = naga_options_base.clone();
             naga_options_debug.debug_info = Some(naga::back::spv::DebugInfo {
                 source_code: &sf.shader.source,
-                file_name: &file_path,
+                file_name: file_path.to_str().unwrap_or("unknown.wgsl"),
                 //TODO: switch to WGSL once NSight Graphics recognizes it
                 language: naga::back::spv::SourceLanguage::GLSL,
             });

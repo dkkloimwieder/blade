@@ -2,6 +2,9 @@
 
 use super::*;
 
+#[cfg(target_arch = "wasm32")]
+use web_sys;
+
 /// Maps Blade color space to wgpu texture format
 fn map_color_space_to_format(color_space: crate::ColorSpace) -> crate::TextureFormat {
     match color_space {
@@ -83,11 +86,67 @@ impl Context {
     }
 
     /// Create a surface from a window handle (WASM version)
+    ///
+    /// On WASM, this attempts to extract an HtmlCanvasElement from the raw-window-handle.
+    /// For direct canvas access, use `create_surface_from_canvas` instead.
     #[cfg(target_arch = "wasm32")]
     pub fn create_surface<I>(&self, _window: &I) -> Result<Surface, crate::NotSupportedError> {
-        // On WASM, surface creation is typically done via canvas element
-        // This is a placeholder - real implementation would use web_sys::HtmlCanvasElement
+        // raw-window-handle on WASM doesn't reliably provide canvas access
+        // Users should call create_surface_from_canvas directly
         Err(crate::NotSupportedError::PlatformNotSupported)
+    }
+
+    /// Create a surface from an HTML canvas element (WASM only)
+    #[cfg(target_arch = "wasm32")]
+    pub fn create_surface_from_canvas(
+        &self,
+        canvas: web_sys::HtmlCanvasElement,
+    ) -> Result<Surface, crate::NotSupportedError> {
+        let surface = self
+            .instance
+            .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
+            .map_err(|e| {
+                log::error!("Failed to create surface from canvas: {}", e);
+                crate::NotSupportedError::PlatformNotSupported
+            })?;
+
+        // Get surface capabilities
+        let caps = surface.get_capabilities(&self.adapter);
+        let format = caps
+            .formats
+            .first()
+            .copied()
+            .unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb);
+
+        // Create initial config (will be reconfigured later)
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width: 1,
+            height: 1,
+            present_mode: wgpu::PresentMode::Fifo,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: caps
+                .alpha_modes
+                .first()
+                .copied()
+                .unwrap_or(wgpu::CompositeAlphaMode::Auto),
+            view_formats: vec![],
+        };
+
+        let blade_format = match format {
+            wgpu::TextureFormat::Bgra8Unorm => crate::TextureFormat::Bgra8Unorm,
+            wgpu::TextureFormat::Bgra8UnormSrgb => crate::TextureFormat::Bgra8UnormSrgb,
+            wgpu::TextureFormat::Rgba8Unorm => crate::TextureFormat::Rgba8Unorm,
+            wgpu::TextureFormat::Rgba8UnormSrgb => crate::TextureFormat::Rgba8UnormSrgb,
+            _ => crate::TextureFormat::Bgra8UnormSrgb,
+        };
+
+        Ok(Surface {
+            raw: surface,
+            config,
+            format: blade_format,
+        })
     }
 
     /// Reconfigure a surface with new dimensions and settings

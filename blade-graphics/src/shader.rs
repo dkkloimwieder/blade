@@ -29,12 +29,14 @@ impl super::Context {
         // Bindings are set up at pipeline creation, ignore here
         let flags = naga::valid::ValidationFlags::all() ^ naga::valid::ValidationFlags::BINDINGS;
         let mut caps = naga::valid::Capabilities::empty();
-        // SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING is native-only (Vulkan/Metal/DX12)
-        // WebGPU does not support this capability
+        // Non-uniform indexing capabilities are native-only (Vulkan/Metal/DX12)
+        // WebGPU does not support these capabilities
+        // naga v28 split the old combined constant into separate capabilities
         #[cfg(not(blade_wgpu))]
         caps.set(
             naga::valid::Capabilities::RAY_QUERY
-                | naga::valid::Capabilities::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
+                | naga::valid::Capabilities::TEXTURE_AND_SAMPLER_BINDING_ARRAY_NON_UNIFORM_INDEXING
+                | naga::valid::Capabilities::STORAGE_BUFFER_BINDING_ARRAY_NON_UNIFORM_INDEXING,
             !device_caps.ray_query.is_empty(),
         );
         #[cfg(blade_wgpu)]

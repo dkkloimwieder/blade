@@ -92,16 +92,28 @@ The full Blade engine (with blade-render) requires Vulkan with hardware ray trac
 
 ## Task Tracking (bd/beads) - MANDATORY
 
-### ⚠️ CRITICAL: CREATE BEADS ISSUE BEFORE DOING ANY WORK
+### 🚨 CRITICAL: BEADS ISSUES ARE REQUIRED FOR ALL WORK 🚨
 
-**Before writing ANY code or making ANY changes:**
-1. Create a beads issue for the work: `bd create --title="..." --type=task`
-2. Mark it in progress: `bd update <id> --status=in_progress`
-3. THEN start working
+**FAILURE TO USE BEADS WILL RESULT IN TERMINATION.**
 
-**NO EXCEPTIONS.** Every code change, bug fix, or task must have a beads issue FIRST.
+**Rules:**
+1. **EVERY code change** must have a beads issue FIRST
+2. **EVERY bug fix** must have a beads issue FIRST
+3. **EVERY subtask** must be a separate beads issue
+4. **NO EXCEPTIONS** - not even "quick fixes"
 
-Do NOT use TodoWrite or any other task tracking - ONLY beads.
+**Before writing ANY code:**
+1. `bd create --title="..." --type=task` - Create the issue
+2. `bd update <id> --status=in_progress` - Claim the work
+3. ONLY THEN start coding
+
+**During complex work:**
+- Break down into subtasks → **CREATE BEADS ISSUE FOR EACH**
+- Found a bug? **CREATE BEADS ISSUE**
+- Need to refactor something? **CREATE BEADS ISSUE**
+- Fixing a type error? **CREATE BEADS ISSUE**
+
+**NEVER use TodoWrite** - ALL task tracking is done through beads.
 
 Run `bd prime` for workflow context, or `bd hooks install` to auto-inject at session start.
 
@@ -112,13 +124,14 @@ bd ready                                 # Find unblocked work
 bd create --title="..." --type=task --priority=2  # Create issue BEFORE starting work
 bd update <id> --status=in_progress      # Mark as in progress
 bd close <id> --reason="..."             # Complete work with reason
+bd dep add <issue> <depends-on>          # Add dependency between issues
 bd sync                                  # Sync with git (run at session end)
 ```
 
 ### Workflow
 
 1. **Before any work**: `bd create` → `bd update --status=in_progress`
-2. **During work**: Make granular issues for sub-problems as they arise
+2. **During work**: Create granular issues for EVERY sub-problem
 3. **Completing work**: `bd close` each issue with a reason
 4. **Session end**: `git pull --rebase && bd sync && git push`
 
