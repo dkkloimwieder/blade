@@ -8,6 +8,25 @@ const BUNNY_SIZE: f32 = 0.15 * 256.0;
 const GRAVITY: f32 = -9.8 * 100.0;
 const MAX_VELOCITY: i32 = 750;
 
+// Instance data: one per bunny, matches shader InstanceData struct
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct InstanceData {
+    position: [f32; 2],
+    velocity: [f32; 2],
+    color: u32,
+    pad: u32,
+}
+
+// Group 0: Static resources (cached - bind group is reused)
+#[derive(blade_macros::ShaderData)]
+struct StaticParams {
+    sprite_texture: gpu::TextureView,
+    sprite_sampler: gpu::Sampler,
+    instances: gpu::BufferPiece,
+}
+
+// Group 1: Per-frame uniform (recreated each frame - cheap, only uniform data)
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Globals {
@@ -17,33 +36,16 @@ struct Globals {
 }
 
 #[derive(blade_macros::ShaderData)]
-struct Params {
+struct FrameParams {
     globals: Globals,
-    sprite_texture: gpu::TextureView,
-    sprite_sampler: gpu::Sampler,
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct Locals {
-    position: [f32; 2],
-    velocity: [f32; 2],
-    color: u32,
-    pad: u32,
-}
-
-#[derive(blade_macros::ShaderData)]
-struct SpriteData {
-    locals: Locals,
-}
 #[derive(blade_macros::Vertex)]
 struct SpriteVertex {
     pos: [f32; 2],
 }
-struct Sprite {
-    data: SpriteData,
-    vertex_buf: gpu::BufferPiece,
-}
+
+const MAX_BUNNIES: usize = 100_000;
 
 struct Example {
     pipeline: gpu::RenderPipeline,
@@ -53,8 +55,9 @@ struct Example {
     view: gpu::TextureView,
     sampler: gpu::Sampler,
     vertex_buf: gpu::Buffer,
+    instance_buf: gpu::Buffer,
     window_size: winit::dpi::PhysicalSize<u32>,
-    bunnies: Vec<Sprite>,
+    bunnies: Vec<InstanceData>,
     rng: nanorand::WyRand,
     surface: gpu::Surface,
     context: gpu::Context,
@@ -120,8 +123,8 @@ impl Example {
             .create_surface_configured(window, Self::make_surface_config(window_size))
             .unwrap();
 
-        let global_layout = <Params as gpu::ShaderData>::layout();
-        let local_layout = <SpriteData as gpu::ShaderData>::layout();
+        let static_layout = <StaticParams as gpu::ShaderData>::layout();
+        let frame_layout = <FrameParams as gpu::ShaderData>::layout();
         #[cfg(target_arch = "wasm32")]
         let shader_source = include_str!("shader.wgsl");
         #[cfg(not(target_arch = "wasm32"))]
@@ -132,7 +135,7 @@ impl Example {
 
         let pipeline = context.create_render_pipeline(gpu::RenderPipelineDesc {
             name: "main",
-            data_layouts: &[&global_layout, &local_layout],
+            data_layouts: &[&static_layout, &frame_layout],
             vertex: shader.at("vs_main"),
             vertex_fetches: &[gpu::VertexFetchState {
                 layout: &<SpriteVertex as gpu::Vertex>::layout(),
@@ -218,17 +221,19 @@ impl Example {
         }
         context.sync_buffer(vertex_buf);
 
-        let mut bunnies = Vec::new();
-        bunnies.push(Sprite {
-            data: SpriteData {
-                locals: Locals {
-                    position: [-100.0, 100.0],
-                    velocity: [10.0, 0.0],
-                    color: 0xFFFFFFFF,
-                    pad: 0,
-                },
-            },
-            vertex_buf: vertex_buf.into(),
+        // Instance buffer for all bunnies - updated each frame
+        let instance_buf = context.create_buffer(gpu::BufferDesc {
+            name: "instances",
+            size: (MAX_BUNNIES * mem::size_of::<InstanceData>()) as u64,
+            memory: gpu::Memory::Shared,
+        });
+
+        let mut bunnies = Vec::with_capacity(MAX_BUNNIES);
+        bunnies.push(InstanceData {
+            position: [-100.0, 100.0],
+            velocity: [10.0, 0.0],
+            color: 0xFFFFFFFF,
+            pad: 0,
         });
 
         let mut command_encoder = context.create_command_encoder(gpu::CommandEncoderDesc {
@@ -253,6 +258,7 @@ impl Example {
             view,
             sampler,
             vertex_buf,
+            instance_buf,
             window_size,
             bunnies,
             rng: nanorand::WyRand::new_seed(73),
@@ -269,19 +275,14 @@ impl Example {
 
     fn increase(&mut self) {
         use nanorand::Rng as _;
-        let spawn_count = 64 + self.bunnies.len() / 2;
+        let spawn_count = (64 + self.bunnies.len() / 2).min(MAX_BUNNIES - self.bunnies.len());
         for _ in 0..spawn_count {
             let speed = self.rng.generate_range(-MAX_VELOCITY..=MAX_VELOCITY) as f32;
-            self.bunnies.push(Sprite {
-                data: SpriteData {
-                    locals: Locals {
-                        position: [0.0, 0.5 * (self.window_size.height as f32)],
-                        velocity: [speed, 0.0],
-                        color: self.rng.generate::<u32>(),
-                        pad: 0,
-                    },
-                },
-                vertex_buf: self.vertex_buf.into(),
+            self.bunnies.push(InstanceData {
+                position: [0.0, 0.5 * (self.window_size.height as f32)],
+                velocity: [speed, 0.0],
+                color: self.rng.generate::<u32>(),
+                pad: 0,
             });
         }
         println!("Population: {} bunnies", self.bunnies.len());
@@ -289,29 +290,17 @@ impl Example {
 
     fn step(&mut self, delta: f32) {
         for bunny in self.bunnies.iter_mut() {
-            let Sprite {
-                data:
-                    SpriteData {
-                        locals:
-                            Locals {
-                                position: ref mut pos,
-                                velocity: ref mut vel,
-                                ..
-                            },
-                    },
-                ..
-            } = *bunny;
-
-            pos[0] += vel[0] * delta;
-            pos[1] += vel[1] * delta;
-            vel[1] += GRAVITY * delta;
-            if (vel[0] > 0.0 && pos[0] + 0.5 * BUNNY_SIZE > self.window_size.width as f32)
-                || (vel[0] < 0.0 && pos[0] - 0.5 * BUNNY_SIZE < 0.0)
+            bunny.position[0] += bunny.velocity[0] * delta;
+            bunny.position[1] += bunny.velocity[1] * delta;
+            bunny.velocity[1] += GRAVITY * delta;
+            if (bunny.velocity[0] > 0.0
+                && bunny.position[0] + 0.5 * BUNNY_SIZE > self.window_size.width as f32)
+                || (bunny.velocity[0] < 0.0 && bunny.position[0] - 0.5 * BUNNY_SIZE < 0.0)
             {
-                vel[0] *= -1.0;
+                bunny.velocity[0] *= -1.0;
             }
-            if vel[1] < 0.0 && pos[1] < 0.5 * BUNNY_SIZE {
-                vel[1] *= -1.0;
+            if bunny.velocity[1] < 0.0 && bunny.position[1] < 0.5 * BUNNY_SIZE {
+                bunny.velocity[1] *= -1.0;
             }
         }
     }
@@ -321,6 +310,17 @@ impl Example {
             return;
         }
         let frame = self.surface.acquire_frame();
+
+        // Upload all instance data in a single copy
+        let instance_count = self.bunnies.len();
+        unsafe {
+            ptr::copy_nonoverlapping(
+                self.bunnies.as_ptr(),
+                self.instance_buf.data() as *mut InstanceData,
+                instance_count,
+            );
+        }
+        self.context.sync_buffer(self.instance_buf);
 
         self.command_encoder.start();
         self.command_encoder.init_texture(frame.texture());
@@ -337,9 +337,21 @@ impl Example {
             },
         ) {
             let mut rc = pass.with(&self.pipeline);
+
+            // Group 0: Static resources (cached - bind group reused across frames)
             rc.bind(
                 0,
-                &Params {
+                &StaticParams {
+                    sprite_texture: self.view,
+                    sprite_sampler: self.sampler,
+                    instances: self.instance_buf.into(),
+                },
+            );
+
+            // Group 1: Per-frame uniform (recreated each frame - cheap, only uniform data)
+            rc.bind(
+                1,
+                &FrameParams {
                     globals: Globals {
                         mvp_transform: [
                             [2.0 / self.window_size.width as f32, 0.0, 0.0, 0.0],
@@ -350,19 +362,13 @@ impl Example {
                         sprite_size: [BUNNY_SIZE; 2],
                         pad: [0.0; 2],
                     },
-                    sprite_texture: self.view,
-                    sprite_sampler: self.sampler,
                 },
             );
 
-            for sprite in self.bunnies.iter() {
-                //Note: technically, we could get away with either of those bindings
-                // but not them together. However, the purpose of this test is to
-                // mimic a real world draw call, not a super optimized ideal.
-                rc.bind(1, &sprite.data);
-                rc.bind_vertex(0, sprite.vertex_buf);
-                rc.draw(0, 4, 0, 1);
-            }
+            // Bind vertex buffer (quad corners)
+            rc.bind_vertex(0, self.vertex_buf.into());
+            // Single instanced draw: 4 vertices, instance_count instances
+            rc.draw(0, 4, 0, instance_count as u32);
         }
         self.command_encoder.present(frame);
         let sync_point = self.context.submit(&mut self.command_encoder);
@@ -380,6 +386,7 @@ impl Example {
         self.context.destroy_texture(self.texture);
         self.context.destroy_sampler(self.sampler);
         self.context.destroy_buffer(self.vertex_buf);
+        self.context.destroy_buffer(self.instance_buf);
         self.context
             .destroy_command_encoder(&mut self.command_encoder);
         self.context.destroy_render_pipeline(&mut self.pipeline);
@@ -539,7 +546,9 @@ fn main() {
 
     event_loop
         .run(move |event, target| {
-            target.set_control_flow(winit::event_loop::ControlFlow::Poll);
+            // WASM: Use Wait to properly sync with requestAnimationFrame
+            // Poll causes RAF spam (34 calls/frame instead of 1)
+            target.set_control_flow(winit::event_loop::ControlFlow::Wait);
             match event {
                 winit::event::Event::AboutToWait => {
                     // Start async init on first frame
