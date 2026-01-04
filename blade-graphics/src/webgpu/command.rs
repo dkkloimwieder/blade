@@ -258,6 +258,8 @@ pub(super) struct RenderColorAttachment {
     pub store_op: crate::FinishOp,
     /// For frame targets, store the raw wgpu view
     pub frame_view: Option<std::sync::Arc<wgpu::TextureView>>,
+    /// MSAA resolve target (from FinishOp::ResolveTo)
+    pub resolve_target: Option<TextureViewKey>,
 }
 
 /// Render pass depth attachment
@@ -401,11 +403,18 @@ impl CommandEncoder {
         let color_attachments: Vec<RenderColorAttachment> = targets
             .colors
             .iter()
-            .map(|ct| RenderColorAttachment {
-                view_key: ct.view.raw,
-                load_op: ct.init_op,
-                store_op: ct.finish_op,
-                frame_view: None,
+            .map(|ct| {
+                let resolve_target = match &ct.finish_op {
+                    crate::FinishOp::ResolveTo(view) => Some(view.raw),
+                    _ => None,
+                };
+                RenderColorAttachment {
+                    view_key: ct.view.raw,
+                    load_op: ct.init_op,
+                    store_op: ct.finish_op,
+                    frame_view: None,
+                    resolve_target,
+                }
             })
             .collect();
 
@@ -1359,9 +1368,16 @@ impl Context {
         state: &mut ExecutionState,
     ) {
         // Build color attachments for wgpu
+        // Note: We need to hold references to resolve target views, so collect them first
+        let resolve_views: Vec<Option<&wgpu::TextureView>> = color_attachments
+            .iter()
+            .map(|ca| ca.resolve_target.and_then(|key| hub.texture_views.get(key)))
+            .collect();
+
         let wgpu_color_attachments: Vec<Option<wgpu::RenderPassColorAttachment>> = color_attachments
             .iter()
-            .map(|ca| {
+            .zip(resolve_views.iter())
+            .map(|(ca, resolve_view)| {
                 // Try to get view from frame_view first, then from hub
                 let view: &wgpu::TextureView = if let Some(ref frame_view) = ca.frame_view {
                     frame_view.as_ref()
@@ -1371,7 +1387,7 @@ impl Context {
 
                 Some(wgpu::RenderPassColorAttachment {
                     view,
-                    resolve_target: None, // TODO: Handle ResolveTo
+                    resolve_target: *resolve_view,
                     ops: wgpu::Operations {
                         load: map_load_op(&ca.load_op),
                         store: map_store_op(&ca.store_op),
