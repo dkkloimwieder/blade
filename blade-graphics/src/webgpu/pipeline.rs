@@ -16,17 +16,12 @@ fn with_error_scope<T, F: FnOnce() -> T>(device: &wgpu::Device, name: &str, f: F
     result
 }
 
+/// On WASM, skip error scopes entirely to avoid ordering issues.
+/// wgpu requires error scopes to be popped in reverse order, but async futures
+/// don't guarantee execution order. Use browser DevTools for error debugging.
 #[cfg(target_arch = "wasm32")]
-fn with_error_scope<T, F: FnOnce() -> T>(device: &wgpu::Device, name: &str, f: F) -> T {
-    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let result = f();
-    let name = name.to_string();
-    wasm_bindgen_futures::spawn_local(async move {
-        if let Some(e) = scope.pop().await {
-            log::error!("WebGPU pipeline '{}' validation error: {}", name, e);
-        }
-    });
-    result
+fn with_error_scope<T, F: FnOnce() -> T>(_device: &wgpu::Device, _name: &str, f: F) -> T {
+    f()
 }
 
 /// Compiled shader ready for pipeline creation

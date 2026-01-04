@@ -128,7 +128,7 @@ impl Example {
         let context = gpu::Context::init_async(gpu::ContextDesc {
             presentation: true,
             validation: cfg!(debug_assertions),
-            timing: true, // Enable GPU timing for profiling
+            timing: false, // Timing queries add overhead on WASM
             capture: false,
             overlay: false, // overlay not supported on WASM
             device_id: 0,
@@ -642,9 +642,10 @@ fn main() {
                         let window_init = window_clone.clone();
                         wasm_bindgen_futures::spawn_local(async move {
                             let mut ex = Example::new_async(&window_init).await;
-                            // Pre-populate with bunnies
-                            ex.increase();
-                            ex.increase();
+                            // Pre-populate with bunnies (~1000+)
+                            for _ in 0..6 {  // ~1331 bunnies
+                                ex.increase();
+                            }
                             *example_init.borrow_mut() = Some(ex);
                             log::info!("WebGPU bunnymark initialized (blade_wgpu backend)");
                         });
