@@ -102,7 +102,7 @@ impl Example {
         let context = gpu::Context::init_async(gpu::ContextDesc {
             presentation: true,
             validation: cfg!(debug_assertions),
-            timing: false,
+            timing: true, // Enable GPU timing for profiling
             capture: false,
             overlay: false, // overlay not supported on WASM
             device_id: 0,
@@ -584,9 +584,30 @@ fn main() {
                                 let elapsed = now - *last_time.borrow();
                                 let avg_frame_ms = elapsed / 100.0;
                                 let fps = 1000.0 / avg_frame_ms;
+
+                                // Get GPU timing results
+                                let timing = ex.context.timing_results();
+                                let gpu_time_str = if timing.is_empty() {
+                                    "N/A".to_string()
+                                } else {
+                                    timing.iter()
+                                        .map(|(name, dur)| format!("{}:{:.2}ms", name, dur.as_secs_f64() * 1000.0))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                };
+
+                                // Get cache stats
+                                let (hits, misses, size) = ex.context.cache_stats();
+                                let hit_rate = if hits + misses > 0 {
+                                    (hits as f64 / (hits + misses) as f64) * 100.0
+                                } else {
+                                    0.0
+                                };
+
                                 log::info!(
-                                    "Frame {}: avg {:.2}ms ({:.1} FPS), {} bunnies",
-                                    count, avg_frame_ms, fps, ex.bunnies.len()
+                                    "Frame {}: avg {:.2}ms ({:.1} FPS), {} bunnies | GPU: [{}] | Cache: {:.1}% ({}/{}), size={}",
+                                    count, avg_frame_ms, fps, ex.bunnies.len(),
+                                    gpu_time_str, hit_rate, hits, misses, size
                                 );
                                 *last_time.borrow_mut() = now;
                             }
