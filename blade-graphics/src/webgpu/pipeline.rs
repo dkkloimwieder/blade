@@ -2,6 +2,33 @@
 
 use super::*;
 
+/// Create a pipeline with error scope for validation.
+/// On native, blocks to check errors synchronously.
+/// On WASM, spawns a future to log errors asynchronously.
+#[cfg(not(target_arch = "wasm32"))]
+fn with_error_scope<T, F: FnOnce() -> T>(device: &wgpu::Device, name: &str, f: F) -> T {
+    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let result = f();
+    let error = pollster::block_on(scope.pop());
+    if let Some(e) = error {
+        log::error!("WebGPU pipeline '{}' validation error: {}", name, e);
+    }
+    result
+}
+
+#[cfg(target_arch = "wasm32")]
+fn with_error_scope<T, F: FnOnce() -> T>(device: &wgpu::Device, name: &str, f: F) -> T {
+    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let result = f();
+    let name = name.to_string();
+    wasm_bindgen_futures::spawn_local(async move {
+        if let Some(e) = scope.pop().await {
+            log::error!("WebGPU pipeline '{}' validation error: {}", name, e);
+        }
+    });
+    result
+}
+
 /// Compiled shader ready for pipeline creation
 struct CompiledShader {
     module: wgpu::ShaderModule,
@@ -380,14 +407,16 @@ impl crate::traits::ShaderDevice for Context {
             immediate_size: 0, // wgpu v28: no push constants for WebGPU
         });
 
-        // Create compute pipeline
-        let raw = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some(desc.name),
-            layout: Some(&pipeline_layout),
-            module: &shader.module,
-            entry_point: Some(&shader.entry_point),
-            compilation_options: Default::default(),
-            cache: None,
+        // Create compute pipeline with error scope for validation
+        let raw = with_error_scope(&self.device, desc.name, || {
+            self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(desc.name),
+                layout: Some(&pipeline_layout),
+                module: &shader.module,
+                entry_point: Some(&shader.entry_point),
+                compilation_options: Default::default(),
+                cache: None,
+            })
         });
 
         // Store in hub
@@ -536,43 +565,45 @@ impl crate::traits::ShaderDevice for Context {
             },
         });
 
-        // Create render pipeline
-        let raw = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(desc.name),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &vertex_shader.module,
-                entry_point: Some(&vertex_shader.entry_point),
-                compilation_options: Default::default(),
-                buffers: &vertex_buffer_layouts,
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: map_primitive_topology(desc.primitive.topology),
-                strip_index_format: None,
-                front_face: map_front_face(desc.primitive.front_face),
-                cull_mode: desc.primitive.cull_mode.map(map_face),
-                unclipped_depth: desc.primitive.unclipped_depth,
-                polygon_mode: if desc.primitive.wireframe {
-                    wgpu::PolygonMode::Line
-                } else {
-                    wgpu::PolygonMode::Fill
+        // Create render pipeline with error scope for validation
+        let raw = with_error_scope(&self.device, desc.name, || {
+            self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(desc.name),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &vertex_shader.module,
+                    entry_point: Some(&vertex_shader.entry_point),
+                    compilation_options: Default::default(),
+                    buffers: &vertex_buffer_layouts,
                 },
-                conservative: false,
-            },
-            depth_stencil,
-            multisample: wgpu::MultisampleState {
-                count: desc.multisample_state.sample_count,
-                mask: desc.multisample_state.sample_mask,
-                alpha_to_coverage_enabled: desc.multisample_state.alpha_to_coverage,
-            },
-            fragment: fragment_shader.as_ref().map(|fs| wgpu::FragmentState {
-                module: &fs.module,
-                entry_point: Some(&fs.entry_point),
-                compilation_options: Default::default(),
-                targets: &color_targets,
-            }),
-            multiview_mask: None, // wgpu v28: multiview renamed
-            cache: None,
+                primitive: wgpu::PrimitiveState {
+                    topology: map_primitive_topology(desc.primitive.topology),
+                    strip_index_format: None,
+                    front_face: map_front_face(desc.primitive.front_face),
+                    cull_mode: desc.primitive.cull_mode.map(map_face),
+                    unclipped_depth: desc.primitive.unclipped_depth,
+                    polygon_mode: if desc.primitive.wireframe {
+                        wgpu::PolygonMode::Line
+                    } else {
+                        wgpu::PolygonMode::Fill
+                    },
+                    conservative: false,
+                },
+                depth_stencil,
+                multisample: wgpu::MultisampleState {
+                    count: desc.multisample_state.sample_count,
+                    mask: desc.multisample_state.sample_mask,
+                    alpha_to_coverage_enabled: desc.multisample_state.alpha_to_coverage,
+                },
+                fragment: fragment_shader.as_ref().map(|fs| wgpu::FragmentState {
+                    module: &fs.module,
+                    entry_point: Some(&fs.entry_point),
+                    compilation_options: Default::default(),
+                    targets: &color_targets,
+                }),
+                multiview_mask: None, // wgpu v28: multiview renamed
+                cache: None,
+            })
         });
 
         // Store in hub
