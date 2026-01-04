@@ -48,6 +48,8 @@ new_key_type! {
 struct Limits {
     uniform_buffer_alignment: u32,
     max_bind_groups: u32,
+    /// Whether GPU timing queries are supported
+    timing_supported: bool,
 }
 
 //=============================================================================

@@ -25,7 +25,7 @@ impl std::error::Error for PlatformError {}
 
 #[cfg(target_arch = "wasm32")]
 pub async fn create_context(
-    _desc: &crate::ContextDesc,
+    desc: &crate::ContextDesc,
 ) -> Result<Context, PlatformError> {
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::BROWSER_WEBGPU,
@@ -42,12 +42,24 @@ pub async fn create_context(
         .await
         .map_err(|e| PlatformError(format!("Adapter request failed: {}", e)))?;
 
+    // Check timing support
+    let timing_supported = adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+    if desc.timing && !timing_supported {
+        log::warn!("GPU timing requested but TIMESTAMP_QUERY not supported on this adapter");
+    }
+
+    // Request timing feature if supported and requested
+    let mut required_features = wgpu::Features::empty();
+    if desc.timing && timing_supported {
+        required_features |= wgpu::Features::TIMESTAMP_QUERY;
+    }
+
     // wgpu v28: DeviceDescriptor requires experimental_features and trace fields
     let (device, queue) = adapter
         .request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("Blade WebGPU Device"),
-                required_features: wgpu::Features::empty(),
+                required_features,
                 required_limits: wgpu::Limits::default(),
                 memory_hints: wgpu::MemoryHints::default(),
                 experimental_features: wgpu::ExperimentalFeatures::default(),
@@ -83,6 +95,7 @@ pub async fn create_context(
         limits: Limits {
             uniform_buffer_alignment: wgpu_limits.min_uniform_buffer_offset_alignment,
             max_bind_groups: wgpu_limits.max_bind_groups,
+            timing_supported: desc.timing && timing_supported,
         },
         bind_group_cache: RwLock::new(BindGroupCache::new(BIND_GROUP_CACHE_SIZE)),
         uniform_buffer: RwLock::new(UniformBuffer::new()),
@@ -95,7 +108,7 @@ pub async fn create_context(
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn create_context(
-    _desc: &crate::ContextDesc,
+    desc: &crate::ContextDesc,
 ) -> Result<Context, PlatformError> {
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
@@ -110,11 +123,23 @@ pub fn create_context(
     }))
     .map_err(|e| PlatformError(format!("Adapter request failed: {}", e)))?;
 
+    // Check timing support
+    let timing_supported = adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+    if desc.timing && !timing_supported {
+        log::warn!("GPU timing requested but TIMESTAMP_QUERY not supported on this adapter");
+    }
+
+    // Request timing feature if supported and requested
+    let mut required_features = wgpu::Features::empty();
+    if desc.timing && timing_supported {
+        required_features |= wgpu::Features::TIMESTAMP_QUERY;
+    }
+
     // wgpu v28: DeviceDescriptor requires experimental_features and trace fields
     let (device, queue) = pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: Some("Blade WebGPU Device"),
-            required_features: wgpu::Features::empty(),
+            required_features,
             required_limits: wgpu::Limits::default(),
             memory_hints: wgpu::MemoryHints::default(),
             experimental_features: wgpu::ExperimentalFeatures::default(),
@@ -149,6 +174,7 @@ pub fn create_context(
         limits: Limits {
             uniform_buffer_alignment: wgpu_limits.min_uniform_buffer_offset_alignment,
             max_bind_groups: wgpu_limits.max_bind_groups,
+            timing_supported: desc.timing && timing_supported,
         },
         bind_group_cache: RwLock::new(BindGroupCache::new(BIND_GROUP_CACHE_SIZE)),
         uniform_buffer: RwLock::new(UniformBuffer::new()),
