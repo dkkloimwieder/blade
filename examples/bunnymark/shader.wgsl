@@ -5,7 +5,7 @@ var sprite_sampler: sampler;
 // Instance data stored in storage buffer
 struct InstanceData {
     position: vec2<f32>,
-    velocity: vec2<f32>,  // unused in shader, but part of buffer layout
+    velocity: vec2<f32>,
     color: u32,
     pad: u32,
 };

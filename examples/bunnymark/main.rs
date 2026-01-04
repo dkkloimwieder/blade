@@ -7,6 +7,7 @@ use std::{mem, ptr};
 const BUNNY_SIZE: f32 = 0.15 * 256.0;
 const GRAVITY: f32 = -9.8 * 100.0;
 const MAX_VELOCITY: i32 = 750;
+const WORKGROUP_SIZE: u32 = 256;
 
 // Instance data: one per bunny, matches shader InstanceData struct
 #[repr(C)]
@@ -40,6 +41,25 @@ struct FrameParams {
     globals: Globals,
 }
 
+// Compute pipeline: Physics simulation params
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct SimParams {
+    delta_time: f32,
+    gravity: f32,
+    bounds_width: f32,
+    bounds_height: f32,
+    sprite_half_size: f32,
+    bunny_count: u32,
+    _pad: [f32; 2],
+}
+
+#[derive(blade_macros::ShaderData)]
+struct ComputeParams {
+    sim_params: SimParams,
+    instances_rw: gpu::BufferPiece,
+}
+
 #[derive(blade_macros::Vertex)]
 struct SpriteVertex {
     pos: [f32; 2],
@@ -48,7 +68,8 @@ struct SpriteVertex {
 const MAX_BUNNIES: usize = 100_000;
 
 struct Example {
-    pipeline: gpu::RenderPipeline,
+    render_pipeline: gpu::RenderPipeline,
+    compute_pipeline: gpu::ComputePipeline,
     command_encoder: gpu::CommandEncoder,
     prev_sync_point: Option<gpu::SyncPoint>,
     texture: gpu::Texture,
@@ -56,8 +77,10 @@ struct Example {
     sampler: gpu::Sampler,
     vertex_buf: gpu::Buffer,
     instance_buf: gpu::Buffer,
+    staging_buf: gpu::Buffer,
     window_size: winit::dpi::PhysicalSize<u32>,
-    bunnies: Vec<InstanceData>,
+    bunny_count: usize,
+    pending_bunnies: Vec<InstanceData>,
     rng: nanorand::WyRand,
     surface: gpu::Surface,
     context: gpu::Context,
@@ -125,18 +148,30 @@ impl Example {
 
         let static_layout = <StaticParams as gpu::ShaderData>::layout();
         let frame_layout = <FrameParams as gpu::ShaderData>::layout();
+        let compute_layout = <ComputeParams as gpu::ShaderData>::layout();
+
+        // Load render shader
         #[cfg(target_arch = "wasm32")]
-        let shader_source = include_str!("shader.wgsl");
+        let render_source = include_str!("shader.wgsl");
         #[cfg(not(target_arch = "wasm32"))]
-        let shader_source = std::fs::read_to_string("examples/bunnymark/shader.wgsl").unwrap();
-        let shader = context.create_shader(gpu::ShaderDesc {
-            source: &shader_source,
+        let render_source = std::fs::read_to_string("examples/bunnymark/shader.wgsl").unwrap();
+        let render_shader = context.create_shader(gpu::ShaderDesc {
+            source: &render_source,
         });
 
-        let pipeline = context.create_render_pipeline(gpu::RenderPipelineDesc {
-            name: "main",
+        // Load compute shader (separate file to avoid binding conflicts)
+        #[cfg(target_arch = "wasm32")]
+        let compute_source = include_str!("compute.wgsl");
+        #[cfg(not(target_arch = "wasm32"))]
+        let compute_source = std::fs::read_to_string("examples/bunnymark/compute.wgsl").unwrap();
+        let compute_shader = context.create_shader(gpu::ShaderDesc {
+            source: &compute_source,
+        });
+
+        let render_pipeline = context.create_render_pipeline(gpu::RenderPipelineDesc {
+            name: "render",
             data_layouts: &[&static_layout, &frame_layout],
-            vertex: shader.at("vs_main"),
+            vertex: render_shader.at("vs_main"),
             vertex_fetches: &[gpu::VertexFetchState {
                 layout: &<SpriteVertex as gpu::Vertex>::layout(),
                 instanced: false,
@@ -146,13 +181,19 @@ impl Example {
                 ..Default::default()
             },
             depth_stencil: None,
-            fragment: Some(shader.at("fs_main")),
+            fragment: Some(render_shader.at("fs_main")),
             color_targets: &[gpu::ColorTargetState {
                 format: surface.info().format,
                 blend: Some(gpu::BlendState::ALPHA_BLENDING),
                 write_mask: gpu::ColorWrites::default(),
             }],
             multisample_state: gpu::MultisampleState::default(),
+        });
+
+        let compute_pipeline = context.create_compute_pipeline(gpu::ComputePipelineDesc {
+            name: "physics",
+            data_layouts: &[&compute_layout],
+            compute: compute_shader.at("cs_update"),
         });
 
         let extent = gpu::Extent {
@@ -221,15 +262,24 @@ impl Example {
         }
         context.sync_buffer(vertex_buf);
 
-        // Instance buffer for all bunnies - updated each frame
+        // Instance buffer for all bunnies - GPU-only, updated by compute shader
+        // Using Device memory eliminates the shadow buffer and WASM→JS copy overhead
         let instance_buf = context.create_buffer(gpu::BufferDesc {
             name: "instances",
             size: (MAX_BUNNIES * mem::size_of::<InstanceData>()) as u64,
-            memory: gpu::Memory::Shared,
+            memory: gpu::Memory::Device,
         });
 
-        let mut bunnies = Vec::with_capacity(MAX_BUNNIES);
-        bunnies.push(InstanceData {
+        // Staging buffer for uploading new bunnies to GPU
+        let staging_buf = context.create_buffer(gpu::BufferDesc {
+            name: "staging",
+            size: (MAX_BUNNIES * mem::size_of::<InstanceData>()) as u64,
+            memory: gpu::Memory::Upload,
+        });
+
+        // Initial bunny
+        let mut pending_bunnies = Vec::with_capacity(MAX_BUNNIES);
+        pending_bunnies.push(InstanceData {
             position: [-100.0, 100.0],
             velocity: [10.0, 0.0],
             color: 0xFFFFFFFF,
@@ -251,7 +301,8 @@ impl Example {
         context.destroy_buffer(upload_buffer);
 
         Self {
-            pipeline,
+            render_pipeline,
+            compute_pipeline,
             command_encoder,
             prev_sync_point: None,
             texture,
@@ -259,8 +310,10 @@ impl Example {
             sampler,
             vertex_buf,
             instance_buf,
+            staging_buf,
             window_size,
-            bunnies,
+            bunny_count: 0, // Will be set when pending_bunnies are uploaded
+            pending_bunnies,
             rng: nanorand::WyRand::new_seed(73),
             surface,
             context,
@@ -275,56 +328,84 @@ impl Example {
 
     fn increase(&mut self) {
         use nanorand::Rng as _;
-        let spawn_count = (64 + self.bunnies.len() / 2).min(MAX_BUNNIES - self.bunnies.len());
+        let total_bunnies = self.bunny_count + self.pending_bunnies.len();
+        let spawn_count = (64 + total_bunnies / 2).min(MAX_BUNNIES - total_bunnies);
         for _ in 0..spawn_count {
             let speed = self.rng.generate_range(-MAX_VELOCITY..=MAX_VELOCITY) as f32;
-            self.bunnies.push(InstanceData {
+            self.pending_bunnies.push(InstanceData {
                 position: [0.0, 0.5 * (self.window_size.height as f32)],
                 velocity: [speed, 0.0],
                 color: self.rng.generate::<u32>(),
                 pad: 0,
             });
         }
-        println!("Population: {} bunnies", self.bunnies.len());
+        println!("Population: {} bunnies", total_bunnies + spawn_count);
     }
 
-    fn step(&mut self, delta: f32) {
-        for bunny in self.bunnies.iter_mut() {
-            bunny.position[0] += bunny.velocity[0] * delta;
-            bunny.position[1] += bunny.velocity[1] * delta;
-            bunny.velocity[1] += GRAVITY * delta;
-            if (bunny.velocity[0] > 0.0
-                && bunny.position[0] + 0.5 * BUNNY_SIZE > self.window_size.width as f32)
-                || (bunny.velocity[0] < 0.0 && bunny.position[0] - 0.5 * BUNNY_SIZE < 0.0)
-            {
-                bunny.velocity[0] *= -1.0;
-            }
-            if bunny.velocity[1] < 0.0 && bunny.position[1] < 0.5 * BUNNY_SIZE {
-                bunny.velocity[1] *= -1.0;
-            }
-        }
-    }
-
-    fn render(&mut self) {
+    fn render(&mut self, delta: f32) {
         if self.window_size == Default::default() {
             return;
         }
         let frame = self.surface.acquire_frame();
 
-        // Upload all instance data in a single copy
-        let instance_count = self.bunnies.len();
-        unsafe {
-            ptr::copy_nonoverlapping(
-                self.bunnies.as_ptr(),
-                self.instance_buf.data() as *mut InstanceData,
-                instance_count,
-            );
-        }
-        self.context.sync_buffer(self.instance_buf);
-
         self.command_encoder.start();
         self.command_encoder.init_texture(frame.texture());
 
+        // Upload any pending bunnies to GPU via staging buffer
+        if !self.pending_bunnies.is_empty() {
+            let upload_count = self.pending_bunnies.len();
+            let byte_offset = (self.bunny_count * mem::size_of::<InstanceData>()) as u64;
+            let byte_size = (upload_count * mem::size_of::<InstanceData>()) as u64;
+
+            // Copy to staging buffer
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    self.pending_bunnies.as_ptr(),
+                    self.staging_buf.data() as *mut InstanceData,
+                    upload_count,
+                );
+            }
+            self.context.sync_buffer(self.staging_buf);
+
+            // Copy from staging to instance buffer on GPU
+            if let mut transfer = self.command_encoder.transfer("upload bunnies") {
+                transfer.copy_buffer_to_buffer(
+                    self.staging_buf.at(0),
+                    self.instance_buf.at(byte_offset),
+                    byte_size,
+                );
+            }
+
+            self.bunny_count += upload_count;
+            self.pending_bunnies.clear();
+        }
+
+        // Run physics simulation on GPU (compute shader)
+        if self.bunny_count > 0 {
+            if let mut compute = self.command_encoder.compute("physics") {
+                if let mut pc = compute.with(&self.compute_pipeline) {
+                    pc.bind(
+                        0,
+                        &ComputeParams {
+                            sim_params: SimParams {
+                                delta_time: delta,
+                                gravity: GRAVITY,
+                                bounds_width: self.window_size.width as f32,
+                                bounds_height: self.window_size.height as f32,
+                                sprite_half_size: 0.5 * BUNNY_SIZE,
+                                bunny_count: self.bunny_count as u32,
+                                _pad: [0.0; 2],
+                            },
+                            instances_rw: self.instance_buf.into(),
+                        },
+                    );
+                    let workgroups = (self.bunny_count as u32 + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
+                    pc.dispatch([workgroups, 1, 1]);
+                }
+            }
+        }
+
+        // Render pass
         if let mut pass = self.command_encoder.render(
             "main",
             gpu::RenderTargetSet {
@@ -336,7 +417,7 @@ impl Example {
                 depth_stencil: None,
             },
         ) {
-            let mut rc = pass.with(&self.pipeline);
+            let mut rc = pass.with(&self.render_pipeline);
 
             // Group 0: Static resources (cached - bind group reused across frames)
             rc.bind(
@@ -367,8 +448,8 @@ impl Example {
 
             // Bind vertex buffer (quad corners)
             rc.bind_vertex(0, self.vertex_buf.into());
-            // Single instanced draw: 4 vertices, instance_count instances
-            rc.draw(0, 4, 0, instance_count as u32);
+            // Single instanced draw: 4 vertices, bunny_count instances
+            rc.draw(0, 4, 0, self.bunny_count as u32);
         }
         self.command_encoder.present(frame);
         let sync_point = self.context.submit(&mut self.command_encoder);
@@ -387,9 +468,13 @@ impl Example {
         self.context.destroy_sampler(self.sampler);
         self.context.destroy_buffer(self.vertex_buf);
         self.context.destroy_buffer(self.instance_buf);
+        self.context.destroy_buffer(self.staging_buf);
         self.context
             .destroy_command_encoder(&mut self.command_encoder);
-        self.context.destroy_render_pipeline(&mut self.pipeline);
+        self.context
+            .destroy_render_pipeline(&mut self.render_pipeline);
+        self.context
+            .destroy_compute_pipeline(&mut self.compute_pipeline);
         self.context.destroy_surface(&mut self.surface);
     }
 }
@@ -489,12 +574,11 @@ fn main() {
                             let fps = 1000.0 / avg_frame_ms;
                             log::info!(
                                 "Frame {}: avg {:.2}ms ({:.1} FPS), {} bunnies",
-                                frame_count, avg_frame_ms, fps, example.bunnies.len()
+                                frame_count, avg_frame_ms, fps, example.bunny_count
                             );
                             last_time = now;
                         }
-                        example.step(0.01);
-                        example.render();
+                        example.render(0.01);
                     }
                     _ => {}
                 },
@@ -584,8 +668,7 @@ fn main() {
                                 *fc
                             };
 
-                            ex.step(0.01);
-                            ex.render();
+                            ex.render(0.01);
 
                             // Log performance every 100 frames
                             if count % 100 == 0 {
@@ -615,7 +698,7 @@ fn main() {
 
                                 log::info!(
                                     "Frame {}: avg {:.2}ms ({:.1} FPS), {} bunnies | GPU: [{}] | Cache: {:.1}% ({}/{}), size={}",
-                                    count, avg_frame_ms, fps, ex.bunnies.len(),
+                                    count, avg_frame_ms, fps, ex.bunny_count,
                                     gpu_time_str, hit_rate, hits, misses, size
                                 );
                                 *last_time.borrow_mut() = now;
