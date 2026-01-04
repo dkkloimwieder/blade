@@ -9,7 +9,12 @@ use std::{marker::PhantomData, mem, ops::Range};
 
 type BindTarget = u32;
 const DEBUG_ID: u32 = 0;
-const MAX_TIMEOUT: u64 = 1_000_000_000; // MAX_CLIENT_WAIT_TIMEOUT_WEBGL;
+// WebGL has a very low MAX_CLIENT_WAIT_TIMEOUT_WEBGL (often 0)
+// Native GL can use longer timeouts
+#[cfg(target_arch = "wasm32")]
+const MAX_TIMEOUT: u64 = 0; // WebGL requires non-blocking or very short timeout
+#[cfg(not(target_arch = "wasm32"))]
+const MAX_TIMEOUT: u64 = 1_000_000_000;
 const MAX_QUERIES: usize = crate::limits::PASS_COUNT + 1;
 
 pub use platform::PlatformError;
