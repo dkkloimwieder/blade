@@ -156,6 +156,7 @@ struct BindingSlot {
 type SlotList = Vec<BindingSlot>;
 
 /// Mapping from ShaderDataLayout to WebGPU bind group structure
+#[derive(Clone)]
 struct ShaderDataMapping {
     /// For each binding in the ShaderDataLayout, the target slot(s)
     targets: Box<[SlotList]>,
@@ -629,6 +630,7 @@ impl Frame {
 pub struct ComputePipeline {
     raw: ComputePipelineKey,
     wg_size: [u32; 3],
+    group_mappings: Box<[ShaderDataMapping]>,
 }
 
 impl ComputePipeline {
@@ -642,6 +644,7 @@ pub struct RenderPipeline {
     raw: RenderPipelineKey,
     #[allow(dead_code)]
     topology: crate::PrimitiveTopology,
+    group_mappings: Box<[ShaderDataMapping]>,
 }
 
 //=============================================================================

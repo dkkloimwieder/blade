@@ -562,17 +562,13 @@ impl crate::traits::RenderEncoder for RenderCommandEncoder<'_> {
 
 impl ComputeCommandEncoder<'_> {
     /// Bind a compute pipeline and return a pipeline encoder
-    pub fn with(&mut self, pipeline: &ComputePipeline) -> PipelineEncoder<'_> {
+    pub fn with<'p>(&'p mut self, pipeline: &'p ComputePipeline) -> PipelineEncoder<'p> {
         self.commands.push(Command::SetComputePipeline { key: pipeline.raw });
-
-        // TODO: Get group mappings from pipeline
-        // For now, use empty mappings - will be resolved at submit time
-        static EMPTY_MAPPINGS: &[ShaderDataMapping] = &[];
 
         PipelineEncoder {
             commands: self.commands,
             plain_data: self.plain_data,
-            group_mappings: EMPTY_MAPPINGS,
+            group_mappings: &pipeline.group_mappings,
             limits: self.limits,
         }
     }
@@ -580,17 +576,13 @@ impl ComputeCommandEncoder<'_> {
 
 impl RenderCommandEncoder<'_> {
     /// Bind a render pipeline and return a pipeline encoder
-    pub fn with(&mut self, pipeline: &RenderPipeline) -> PipelineEncoder<'_> {
+    pub fn with<'p>(&'p mut self, pipeline: &'p RenderPipeline) -> PipelineEncoder<'p> {
         self.commands.push(Command::SetRenderPipeline { key: pipeline.raw });
-
-        // TODO: Get group mappings from pipeline
-        // For now, use empty mappings - will be resolved at submit time
-        static EMPTY_MAPPINGS: &[ShaderDataMapping] = &[];
 
         PipelineEncoder {
             commands: self.commands,
             plain_data: self.plain_data,
-            group_mappings: EMPTY_MAPPINGS,
+            group_mappings: &pipeline.group_mappings,
             limits: self.limits,
         }
     }
@@ -599,23 +591,13 @@ impl RenderCommandEncoder<'_> {
 #[hidden_trait::expose]
 impl crate::traits::PipelineEncoder for PipelineEncoder<'_> {
     fn bind<D: crate::ShaderData>(&mut self, group: u32, data: &D) {
-        let layout = D::layout();
-        let targets: Vec<SlotList> = layout
-            .bindings
-            .iter()
-            .enumerate()
-            .map(|(binding_index, _)| {
-                vec![BindingSlot {
-                    group,
-                    binding: binding_index as u32,
-                }]
-            })
-            .collect();
+        // Use pre-computed group mappings from pipeline
+        let targets = &self.group_mappings[group as usize].targets;
 
         let ctx = PipelineContext {
             commands: self.commands,
             plain_data: self.plain_data,
-            targets: &targets,
+            targets,
             limits: self.limits,
         };
 
