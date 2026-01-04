@@ -85,6 +85,7 @@ pub async fn create_context(
             max_bind_groups: wgpu_limits.max_bind_groups,
         },
         bind_group_cache: RwLock::new(BindGroupCache::new(BIND_GROUP_CACHE_SIZE)),
+        uniform_buffer: RwLock::new(UniformBuffer::new()),
     })
 }
 
@@ -150,5 +151,6 @@ pub fn create_context(
             max_bind_groups: wgpu_limits.max_bind_groups,
         },
         bind_group_cache: RwLock::new(BindGroupCache::new(BIND_GROUP_CACHE_SIZE)),
+        uniform_buffer: RwLock::new(UniformBuffer::new()),
     })
 }

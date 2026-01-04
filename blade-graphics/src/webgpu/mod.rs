@@ -430,6 +430,61 @@ impl BindGroupCache {
 // Context
 //=============================================================================
 
+/// Ring buffer for per-frame uniform data
+/// Uses triple buffering to avoid GPU/CPU contention with write_buffer
+const UNIFORM_BUFFER_COUNT: usize = 3;
+
+pub(super) struct UniformBuffer {
+    /// Ring of GPU buffers for triple buffering
+    buffers: [Option<wgpu::Buffer>; UNIFORM_BUFFER_COUNT],
+    /// Current buffer capacity in bytes (all buffers same size)
+    capacity: u64,
+    /// Current buffer index in the ring
+    current_index: usize,
+}
+
+impl UniformBuffer {
+    fn new() -> Self {
+        Self {
+            buffers: [None, None, None],
+            capacity: 0,
+            current_index: 0,
+        }
+    }
+
+    /// Get buffer for current frame, creating/resizing if needed
+    /// Uses ring buffer to avoid GPU stalls from write_buffer
+    fn ensure_capacity(&mut self, device: &wgpu::Device, size: u64) -> &wgpu::Buffer {
+        // Rotate to next buffer in ring
+        self.current_index = (self.current_index + 1) % UNIFORM_BUFFER_COUNT;
+
+        // Grow all buffers if needed
+        if self.capacity < size {
+            let new_capacity = (size.max(256)).next_power_of_two();
+            for i in 0..UNIFORM_BUFFER_COUNT {
+                self.buffers[i] = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(&format!("Uniform Buffer Ring {}", i)),
+                    size: new_capacity,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }));
+            }
+            self.capacity = new_capacity;
+            log::debug!("Created uniform buffer ring with capacity {} bytes each", new_capacity);
+        } else if self.buffers[self.current_index].is_none() {
+            // Create just this buffer if ring not fully initialized
+            self.buffers[self.current_index] = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(&format!("Uniform Buffer Ring {}", self.current_index)),
+                size: self.capacity,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+        }
+
+        self.buffers[self.current_index].as_ref().unwrap()
+    }
+}
+
 pub struct Context {
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
@@ -442,6 +497,8 @@ pub struct Context {
     limits: Limits,
     /// Cache for bind groups to avoid recreation
     bind_group_cache: RwLock<BindGroupCache>,
+    /// Reusable buffer for per-frame uniform data (avoids create_buffer_init every frame)
+    uniform_buffer: RwLock<UniformBuffer>,
 }
 
 impl Context {

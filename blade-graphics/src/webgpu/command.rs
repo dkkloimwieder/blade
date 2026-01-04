@@ -3,7 +3,6 @@
 //! Implements deferred command recording pattern following GLES backend.
 
 use super::*;
-use wgpu::util::DeviceExt;
 
 //=============================================================================
 // ShaderBindable Implementations
@@ -766,10 +765,12 @@ impl crate::traits::CommandDevice for Context {
             label: Some(&encoder.name),
         });
 
-        // 3. Execute recorded commands with bind group cache
+        // 3. Execute recorded commands with bind group cache and reusable uniform buffer
         let hub = self.hub.read().unwrap();
         let mut cache = self.bind_group_cache.write().unwrap();
-        self.execute_commands(&hub, &mut cache, &mut cmd_encoder, &encoder.commands, &encoder.plain_data);
+        let mut uniform_buffer = self.uniform_buffer.write().unwrap();
+        self.execute_commands(&hub, &mut cache, &mut uniform_buffer, &mut cmd_encoder, &encoder.commands, &encoder.plain_data);
+        drop(uniform_buffer);
         drop(cache);
         drop(hub);
 
@@ -868,8 +869,8 @@ struct ExecutionState<'a> {
     /// Queue reference for buffer uploads
     #[allow(dead_code)]
     queue: &'a wgpu::Queue,
-    /// Plain data buffer (for uniform data)
-    plain_data_buffer: Option<wgpu::Buffer>,
+    /// Plain data buffer (for uniform data) - reference to reusable buffer
+    plain_data_buffer: Option<&'a wgpu::Buffer>,
     /// Bind group cache reference
     cache: &'a mut BindGroupCache,
 }
@@ -952,12 +953,12 @@ impl<'a> ExecutionState<'a> {
 
             let hub = self.hub;
             let device = self.device;
-            let plain_data_buffer = &self.plain_data_buffer;
+            let plain_data_buffer = self.plain_data_buffer;
 
             if has_plain_data {
                 // Don't cache - create bind group directly
                 let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped.iter()
-                    .filter_map(|entry| make_bind_group_entry(entry, hub, plain_data_buffer.as_ref()))
+                    .filter_map(|entry| make_bind_group_entry(entry, hub, plain_data_buffer))
                     .collect();
 
                 let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -981,7 +982,7 @@ impl<'a> ExecutionState<'a> {
 
                 let bind_group = self.cache.get_or_create(cache_key, || {
                     let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped.iter()
-                        .filter_map(|entry| make_bind_group_entry(entry, hub, plain_data_buffer.as_ref()))
+                        .filter_map(|entry| make_bind_group_entry(entry, hub, plain_data_buffer))
                         .collect();
 
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1044,12 +1045,12 @@ impl<'a> ExecutionState<'a> {
 
             let hub = self.hub;
             let device = self.device;
-            let plain_data_buffer = &self.plain_data_buffer;
+            let plain_data_buffer = self.plain_data_buffer;
 
             if has_plain_data {
                 // Don't cache - create bind group directly
                 let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped.iter()
-                    .filter_map(|entry| make_bind_group_entry(entry, hub, plain_data_buffer.as_ref()))
+                    .filter_map(|entry| make_bind_group_entry(entry, hub, plain_data_buffer))
                     .collect();
 
                 let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1073,7 +1074,7 @@ impl<'a> ExecutionState<'a> {
 
                 let bind_group = self.cache.get_or_create(cache_key, || {
                     let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped.iter()
-                        .filter_map(|entry| make_bind_group_entry(entry, hub, plain_data_buffer.as_ref()))
+                        .filter_map(|entry| make_bind_group_entry(entry, hub, plain_data_buffer))
                         .collect();
 
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1143,17 +1144,16 @@ impl Context {
         &self,
         hub: &Hub,
         cache: &mut BindGroupCache,
+        uniform_buffer: &mut super::UniformBuffer,
         encoder: &mut wgpu::CommandEncoder,
         commands: &[Command],
         plain_data: &[u8],
     ) {
-        // Create plain data buffer if needed
+        // Reuse uniform buffer for plain data (avoids expensive create_buffer_init every frame)
         let plain_data_buffer = if !plain_data.is_empty() {
-            Some(self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Plain Data Buffer"),
-                contents: plain_data,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            }))
+            let buffer = uniform_buffer.ensure_capacity(&self.device, plain_data.len() as u64);
+            self.queue.write_buffer(buffer, 0, plain_data);
+            Some(buffer)
         } else {
             None
         };
