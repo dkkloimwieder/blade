@@ -419,11 +419,16 @@ fn main() {
     #[cfg(not(target_arch = "wasm32"))]
     let mut last_snapshot = std::time::Instant::now();
     #[cfg(target_arch = "wasm32")]
+    let perf = web_sys::window().unwrap().performance().unwrap();
+    #[cfg(target_arch = "wasm32")]
+    let mut last_time = perf.now();
+    #[cfg(target_arch = "wasm32")]
     {
         example.increase();
         example.increase();
+        log::info!("GLES bunnymark initialized (gles backend)");
     }
-    let mut frame_count = 0;
+    let mut frame_count = 0u32;
 
     event_loop
         .run(|event, target| {
@@ -469,6 +474,18 @@ fn main() {
                             last_snapshot = std::time::Instant::now();
                             frame_count = 0;
                         }
+                        #[cfg(target_arch = "wasm32")]
+                        if frame_count % 100 == 0 {
+                            let now = perf.now();
+                            let elapsed = now - last_time;
+                            let avg_frame_ms = elapsed / 100.0;
+                            let fps = 1000.0 / avg_frame_ms;
+                            log::info!(
+                                "Frame {}: avg {:.2}ms ({:.1} FPS), {} bunnies",
+                                frame_count, avg_frame_ms, fps, example.bunnies.len()
+                            );
+                            last_time = now;
+                        }
                         example.step(0.01);
                         example.render();
                     }
@@ -511,6 +528,11 @@ fn main() {
     let init_started: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
     let frame_count: Rc<RefCell<u32>> = Rc::new(RefCell::new(0));
 
+    // Performance timing
+    let perf = web_sys::window().unwrap().performance().unwrap();
+    let last_time: Rc<RefCell<f64>> = Rc::new(RefCell::new(perf.now()));
+    let perf = Rc::new(perf);
+
     let example_clone = example.clone();
     let init_started_clone = init_started.clone();
     let window_clone = window.clone();
@@ -531,7 +553,7 @@ fn main() {
                             ex.increase();
                             ex.increase();
                             *example_init.borrow_mut() = Some(ex);
-                            log::info!("WebGPU bunnymark initialized!");
+                            log::info!("WebGPU bunnymark initialized (blade_wgpu backend)");
                         });
                     }
                     window.request_redraw();
@@ -547,9 +569,27 @@ fn main() {
                     }
                     winit::event::WindowEvent::RedrawRequested => {
                         if let Some(ref mut ex) = *example.borrow_mut() {
-                            *frame_count.borrow_mut() += 1;
+                            let count = {
+                                let mut fc = frame_count.borrow_mut();
+                                *fc += 1;
+                                *fc
+                            };
+
                             ex.step(0.01);
                             ex.render();
+
+                            // Log performance every 100 frames
+                            if count % 100 == 0 {
+                                let now = perf.now();
+                                let elapsed = now - *last_time.borrow();
+                                let avg_frame_ms = elapsed / 100.0;
+                                let fps = 1000.0 / avg_frame_ms;
+                                log::info!(
+                                    "Frame {}: avg {:.2}ms ({:.1} FPS), {} bunnies",
+                                    count, avg_frame_ms, fps, ex.bunnies.len()
+                                );
+                                *last_time.borrow_mut() = now;
+                            }
                         }
                     }
                     _ => {}

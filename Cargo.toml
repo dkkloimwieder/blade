@@ -97,7 +97,7 @@ del-geo = "=0.1.29"
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 console_error_panic_hook = "0.1.7"
 console_log = "1"
-web-sys = { workspace = true, features = ["Window"] }
+web-sys = { workspace = true, features = ["Window", "Performance"] }
 wasm-bindgen-futures = "0.4"
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 getrandom = { version = "0.3", features = ["wasm_js"] }
