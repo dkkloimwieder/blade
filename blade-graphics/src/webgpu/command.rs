@@ -178,6 +178,7 @@ pub(super) enum Command {
 
     // Render pass commands
     BeginRenderPass {
+        label: String,
         color_attachments: Vec<RenderColorAttachment>,
         depth_attachment: Option<RenderDepthAttachment>,
     },
@@ -226,7 +227,9 @@ pub(super) enum Command {
     },
 
     // Compute pass commands
-    BeginComputePass,
+    BeginComputePass {
+        label: String,
+    },
     EndComputePass,
     SetComputePipeline {
         key: ComputePipelineKey,
@@ -388,15 +391,17 @@ impl CommandEncoder {
     }
 
     /// Create a compute pass
-    pub fn compute(&mut self, _label: &str) -> ComputeCommandEncoder<'_> {
-        self.commands.push(Command::BeginComputePass);
+    pub fn compute(&mut self, label: &str) -> ComputeCommandEncoder<'_> {
+        self.commands.push(Command::BeginComputePass {
+            label: label.to_string(),
+        });
         self.pass(PassKind::Compute)
     }
 
     /// Create a render pass
     pub fn render(
         &mut self,
-        _label: &str,
+        label: &str,
         targets: crate::RenderTargetSet,
     ) -> RenderCommandEncoder<'_> {
         // Build color attachments
@@ -429,6 +434,7 @@ impl CommandEncoder {
         });
 
         self.commands.push(Command::BeginRenderPass {
+            label: label.to_string(),
             color_attachments,
             depth_attachment,
         });
@@ -748,6 +754,9 @@ impl crate::traits::CommandDevice for Context {
     }
 
     fn submit(&self, encoder: &mut CommandEncoder) -> SyncPoint {
+        // 0. Initialize timing pool if timing is enabled and not yet initialized
+        self.ensure_timing_initialized();
+
         // 1. Sync all dirty shadow buffers to GPU
         self.sync_dirty_buffers();
 
@@ -765,10 +774,16 @@ impl crate::traits::CommandDevice for Context {
         drop(cache);
         drop(hub);
 
-        // 4. Submit to queue
+        // 4. Resolve timing queries (copies query results to readback buffer)
+        {
+            let pool = self.timing_pool.read().unwrap();
+            pool.resolve(&mut cmd_encoder);
+        }
+
+        // 5. Submit to queue
         let submission_index = self.queue.submit(std::iter::once(cmd_encoder.finish()));
 
-        // 5. Present frames and cleanup their views from hub
+        // 6. Present frames and cleanup their views from hub
         {
             let mut hub = self.hub.write().unwrap();
             for frame in encoder.present_frames.drain(..) {
@@ -778,6 +793,12 @@ impl crate::traits::CommandDevice for Context {
                 }
                 frame.texture.present();
             }
+        }
+
+        // 7. Advance timing frame (reads back previous frame's results)
+        {
+            let mut pool = self.timing_pool.write().unwrap();
+            pool.advance_frame();
         }
 
         SyncPoint { submission_index }
@@ -1284,13 +1305,30 @@ impl Context {
                 }
 
                 // Render pass - find the matching EndRenderPass and execute as a block
-                Command::BeginRenderPass { color_attachments, depth_attachment } => {
+                Command::BeginRenderPass { label, color_attachments, depth_attachment } => {
                     // Find EndRenderPass
                     let end_idx = commands[i..]
                         .iter()
                         .position(|c| matches!(c, Command::EndRenderPass))
                         .map(|p| i + p)
                         .unwrap_or(commands.len());
+
+                    // Get timing info if available
+                    let timestamp_writes = if self.limits.timing_supported {
+                        let mut pool = self.timing_pool.write().unwrap();
+                        pool.begin_pass(label).map(|(query_index, query_set)| {
+                            // SAFETY: query_set lives in TimingQueryPool which outlives the encoder
+                            // We need to transmute the lifetime since we can't prove this to Rust
+                            let query_set_ptr = query_set as *const wgpu::QuerySet;
+                            wgpu::RenderPassTimestampWrites {
+                                query_set: unsafe { &*query_set_ptr },
+                                beginning_of_pass_write_index: Some(query_index),
+                                end_of_pass_write_index: Some(query_index + 1),
+                            }
+                        })
+                    } else {
+                        None
+                    };
 
                     // Execute render pass
                     self.execute_render_pass(
@@ -1299,6 +1337,7 @@ impl Context {
                         &commands[i + 1..end_idx],
                         color_attachments,
                         depth_attachment.as_ref(),
+                        timestamp_writes,
                         &mut state,
                     );
 
@@ -1311,7 +1350,7 @@ impl Context {
                 }
 
                 // Compute pass - find the matching EndComputePass and execute as a block
-                Command::BeginComputePass => {
+                Command::BeginComputePass { label } => {
                     // Find EndComputePass
                     let end_idx = commands[i..]
                         .iter()
@@ -1319,11 +1358,27 @@ impl Context {
                         .map(|p| i + p)
                         .unwrap_or(commands.len());
 
+                    // Get timing info if available
+                    let timestamp_writes = if self.limits.timing_supported {
+                        let mut pool = self.timing_pool.write().unwrap();
+                        pool.begin_pass(label).map(|(query_index, query_set)| {
+                            let query_set_ptr = query_set as *const wgpu::QuerySet;
+                            wgpu::ComputePassTimestampWrites {
+                                query_set: unsafe { &*query_set_ptr },
+                                beginning_of_pass_write_index: Some(query_index),
+                                end_of_pass_write_index: Some(query_index + 1),
+                            }
+                        })
+                    } else {
+                        None
+                    };
+
                     // Execute compute pass
                     self.execute_compute_pass(
                         hub,
                         encoder,
                         &commands[i + 1..end_idx],
+                        timestamp_writes,
                         &mut state,
                     );
 
@@ -1365,6 +1420,7 @@ impl Context {
         commands: &[Command],
         color_attachments: &[RenderColorAttachment],
         depth_attachment: Option<&RenderDepthAttachment>,
+        timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
         state: &mut ExecutionState,
     ) {
         // Build color attachments for wgpu
@@ -1418,7 +1474,7 @@ impl Context {
             label: None,
             color_attachments: &wgpu_color_attachments,
             depth_stencil_attachment: wgpu_depth_attachment,
-            timestamp_writes: None,
+            timestamp_writes,
             occlusion_query_set: None,
             multiview_mask: None, // wgpu v28 requires this field
         });
@@ -1550,11 +1606,12 @@ impl Context {
         hub: &Hub,
         encoder: &mut wgpu::CommandEncoder,
         commands: &[Command],
+        timestamp_writes: Option<wgpu::ComputePassTimestampWrites<'_>>,
         state: &mut ExecutionState,
     ) {
         let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: None,
-            timestamp_writes: None,
+            timestamp_writes,
         });
 
         // Clear pending bind groups for this pass

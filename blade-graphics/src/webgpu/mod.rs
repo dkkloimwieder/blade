@@ -53,6 +53,235 @@ struct Limits {
 }
 
 //=============================================================================
+// GPU Timing Infrastructure
+//=============================================================================
+
+/// Maximum number of passes that can be timed per frame
+const MAX_TIMING_PASSES: u32 = 64;
+
+/// Number of timing frames in the ring buffer (triple buffering)
+const TIMING_RING_SIZE: usize = 3;
+
+/// Ring buffer entry for timing data
+struct TimingFrame {
+    /// Query set for this frame's timestamps (2 queries per pass: begin + end)
+    query_set: wgpu::QuerySet,
+    /// Buffer to resolve query results into
+    resolve_buffer: wgpu::Buffer,
+    /// Mappable buffer for CPU readback
+    readback_buffer: wgpu::Buffer,
+    /// Pass names for this frame (indexed by query pair)
+    pass_names: Vec<String>,
+    /// Number of passes recorded this frame
+    pass_count: u32,
+}
+
+impl TimingFrame {
+    fn new(device: &wgpu::Device) -> Self {
+        let query_set = device.create_query_set(&wgpu::QuerySetDescriptor {
+            label: Some("Blade Timing Query Set"),
+            ty: wgpu::QueryType::Timestamp,
+            count: MAX_TIMING_PASSES * 2, // 2 timestamps per pass (begin + end)
+        });
+
+        // Each timestamp is a u64 (8 bytes)
+        let buffer_size = (MAX_TIMING_PASSES * 2 * 8) as u64;
+
+        let resolve_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Blade Timing Resolve Buffer"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Blade Timing Readback Buffer"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        Self {
+            query_set,
+            resolve_buffer,
+            readback_buffer,
+            pass_names: Vec::with_capacity(MAX_TIMING_PASSES as usize),
+            pass_count: 0,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.pass_names.clear();
+        self.pass_count = 0;
+    }
+}
+
+/// GPU timing query pool with async readback
+pub(super) struct TimingQueryPool {
+    /// Ring buffer of timing frames
+    frames: Option<[TimingFrame; TIMING_RING_SIZE]>,
+    /// Current frame index in ring
+    current_frame: usize,
+    /// Timestamp period in nanoseconds per tick (from queue)
+    timestamp_period: f32,
+    /// Collected timing results from previous frame
+    results: Vec<(String, std::time::Duration)>,
+}
+
+impl TimingQueryPool {
+    pub fn new() -> Self {
+        Self {
+            frames: None,
+            current_frame: 0,
+            timestamp_period: 1.0, // Default, will be set from queue
+            results: Vec::new(),
+        }
+    }
+
+    /// Initialize the query pool (called when timing is enabled)
+    pub fn init(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if self.frames.is_some() {
+            return; // Already initialized
+        }
+
+        self.frames = Some([
+            TimingFrame::new(device),
+            TimingFrame::new(device),
+            TimingFrame::new(device),
+        ]);
+        self.timestamp_period = queue.get_timestamp_period();
+        log::info!(
+            "Initialized GPU timing with period {} ns/tick",
+            self.timestamp_period
+        );
+    }
+
+    /// Get the current frame's query set and allocate a pass slot
+    pub fn begin_pass(&mut self, name: &str) -> Option<(u32, &wgpu::QuerySet)> {
+        let frames = self.frames.as_mut()?;
+        let frame = &mut frames[self.current_frame];
+
+        if frame.pass_count >= MAX_TIMING_PASSES {
+            log::warn!("Exceeded max timing passes per frame ({})", MAX_TIMING_PASSES);
+            return None;
+        }
+
+        let query_index = frame.pass_count * 2; // 2 queries per pass
+        frame.pass_names.push(name.to_string());
+        frame.pass_count += 1;
+
+        Some((query_index, &frame.query_set))
+    }
+
+    /// Resolve queries after command buffer submission
+    pub fn resolve(&self, encoder: &mut wgpu::CommandEncoder) {
+        let Some(ref frames) = self.frames else { return };
+        let frame = &frames[self.current_frame];
+
+        if frame.pass_count == 0 {
+            return;
+        }
+
+        let query_count = frame.pass_count * 2;
+
+        // Resolve query results to GPU buffer
+        encoder.resolve_query_set(&frame.query_set, 0..query_count, &frame.resolve_buffer, 0);
+
+        // Copy to mappable readback buffer
+        encoder.copy_buffer_to_buffer(
+            &frame.resolve_buffer,
+            0,
+            &frame.readback_buffer,
+            0,
+            (query_count * 8) as u64,
+        );
+    }
+
+    /// Advance to next frame and process previous frame's results
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn advance_frame(&mut self) {
+        let Some(ref mut frames) = self.frames else { return };
+
+        // Move to next frame
+        self.current_frame = (self.current_frame + 1) % TIMING_RING_SIZE;
+
+        // Try to read back results from oldest frame (2 frames ago)
+        let readback_index = (self.current_frame + 1) % TIMING_RING_SIZE;
+        let readback_frame = &mut frames[readback_index];
+
+        if readback_frame.pass_count == 0 {
+            readback_frame.reset();
+            return;
+        }
+
+        // Map and read the buffer (blocking on native)
+        let slice = readback_frame.readback_buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+
+        // Collect data we need before processing
+        let pass_names: Vec<String> = readback_frame.pass_names.clone();
+        let period_ns = self.timestamp_period as f64;
+
+        // Poll until mapped (blocking)
+        // Note: In production, this should be non-blocking with device.poll()
+        if rx.recv().ok().and_then(|r| r.ok()).is_some() {
+            let data = slice.get_mapped_range();
+            let timestamps: &[u64] = bytemuck::cast_slice(&data);
+
+            // Process timing data directly here
+            self.results.clear();
+            for (i, name) in pass_names.iter().enumerate() {
+                let begin_idx = i * 2;
+                let end_idx = begin_idx + 1;
+                if end_idx < timestamps.len() {
+                    let begin_tick = timestamps[begin_idx];
+                    let end_tick = timestamps[end_idx];
+                    let duration_ns = ((end_tick - begin_tick) as f64 * period_ns) as u64;
+                    self.results.push((name.clone(), std::time::Duration::from_nanos(duration_ns)));
+                }
+            }
+
+            drop(data);
+            readback_frame.readback_buffer.unmap();
+        }
+
+        readback_frame.reset();
+    }
+
+    /// Advance to next frame (WASM version - async)
+    #[cfg(target_arch = "wasm32")]
+    pub fn advance_frame(&mut self) {
+        let Some(ref mut frames) = self.frames else { return };
+
+        // Move to next frame
+        self.current_frame = (self.current_frame + 1) % TIMING_RING_SIZE;
+
+        // Get index of frame to read back (2 frames ago for triple buffering)
+        let readback_index = (self.current_frame + 1) % TIMING_RING_SIZE;
+        let readback_frame = &mut frames[readback_index];
+
+        if readback_frame.pass_count == 0 {
+            readback_frame.reset();
+            return;
+        }
+
+        // On WASM, we need async mapping - spawn a future to handle it
+        // For now, we just reset and skip readback (timing on WASM is complex)
+        // TODO: Implement proper async readback with wasm_bindgen_futures
+        log::trace!("WASM timing readback not yet implemented, skipping");
+        readback_frame.reset();
+    }
+
+    /// Get timing results from the most recently completed frame
+    pub fn results(&self) -> &[(String, std::time::Duration)] {
+        &self.results
+    }
+}
+
+//=============================================================================
 // Resource Handle Types (Copy-able, Type-Safe)
 //=============================================================================
 
@@ -502,6 +731,8 @@ pub struct Context {
     bind_group_cache: RwLock<BindGroupCache>,
     /// Reusable buffer for per-frame uniform data (avoids create_buffer_init every frame)
     uniform_buffer: RwLock<UniformBuffer>,
+    /// GPU timing query pool (lazily initialized when timing is requested)
+    timing_pool: RwLock<TimingQueryPool>,
 }
 
 impl Context {
@@ -565,6 +796,35 @@ impl Context {
                 // Clear dirty flag with Release ordering
                 entry.dirty.store(false, Ordering::Release);
             }
+        }
+    }
+
+    /// Check if GPU timing is supported
+    pub fn timing_supported(&self) -> bool {
+        self.limits.timing_supported
+    }
+
+    /// Get GPU pass timing results from the most recently completed frame.
+    ///
+    /// Results are available with a 2-frame delay due to triple buffering.
+    /// Returns empty slice if timing is not enabled or not yet available.
+    pub fn timing_results(&self) -> Vec<(String, std::time::Duration)> {
+        let pool = self.timing_pool.read().unwrap();
+        pool.results().to_vec()
+    }
+
+    /// Get bind group cache statistics: (hits, misses, current_size)
+    pub fn cache_stats(&self) -> (u64, u64, usize) {
+        let cache = self.bind_group_cache.read().unwrap();
+        cache.stats()
+    }
+
+    /// Initialize timing pool if timing is enabled.
+    /// Called internally during first submit with timing.
+    fn ensure_timing_initialized(&self) {
+        if self.limits.timing_supported {
+            let mut pool = self.timing_pool.write().unwrap();
+            pool.init(&self.device, &self.queue);
         }
     }
 }

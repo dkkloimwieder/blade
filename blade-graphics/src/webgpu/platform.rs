@@ -99,6 +99,7 @@ pub async fn create_context(
         },
         bind_group_cache: RwLock::new(BindGroupCache::new(BIND_GROUP_CACHE_SIZE)),
         uniform_buffer: RwLock::new(UniformBuffer::new()),
+        timing_pool: RwLock::new(TimingQueryPool::new()),
     })
 }
 
@@ -178,5 +179,6 @@ pub fn create_context(
         },
         bind_group_cache: RwLock::new(BindGroupCache::new(BIND_GROUP_CACHE_SIZE)),
         uniform_buffer: RwLock::new(UniformBuffer::new()),
+        timing_pool: RwLock::new(TimingQueryPool::new()),
     })
 }
