@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
 use std::marker::PhantomData;
 
+
 pub use command::{
     CommandEncoder, ComputeCommandEncoder, PassEncoder, PipelineContext, PipelineEncoder,
     RenderCommandEncoder, TransferCommandEncoder,
@@ -251,7 +252,12 @@ impl TimingQueryPool {
         readback_frame.reset();
     }
 
-    /// Advance to next frame (WASM version - async)
+    /// Advance to next frame (WASM version)
+    ///
+    /// Note: GPU timing queries on WASM require browser flags to be enabled
+    /// (e.g., --enable-dawn-features=allow_unsafe_apis in Chrome).
+    /// Even when enabled, async buffer mapping for readback is complex.
+    /// For now, we skip readback and timing results will be empty on WASM.
     #[cfg(target_arch = "wasm32")]
     pub fn advance_frame(&mut self) {
         let Some(ref mut frames) = self.frames else { return };
@@ -268,16 +274,25 @@ impl TimingQueryPool {
             return;
         }
 
-        // On WASM, we need async mapping - spawn a future to handle it
-        // For now, we just reset and skip readback (timing on WASM is complex)
-        // TODO: Implement proper async readback with wasm_bindgen_futures
-        log::trace!("WASM timing readback not yet implemented, skipping");
+        // On WASM, GPU timing queries require special browser flags and async
+        // buffer mapping is complex. Skip readback for now.
+        // Users should use browser DevTools Performance tab for GPU profiling.
         readback_frame.reset();
     }
 
     /// Get timing results from the most recently completed frame
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn results(&self) -> &[(String, std::time::Duration)] {
         &self.results
+    }
+
+    /// Get timing results (WASM version)
+    ///
+    /// Returns empty - WASM timing readback not implemented.
+    /// Use browser DevTools Performance tab for GPU profiling.
+    #[cfg(target_arch = "wasm32")]
+    pub fn results(&self) -> &[(String, std::time::Duration)] {
+        &[] // Timing readback not available on WASM
     }
 }
 
