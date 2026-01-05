@@ -885,10 +885,12 @@ struct ExecutionState<'a> {
     plain_data_buffer: Option<&'a wgpu::Buffer>,
     /// Bind group cache reference
     cache: &'a mut BindGroupCache,
+    /// Current uniform buffer index in the ring (for cache keying)
+    uniform_buffer_index: usize,
 }
 
 impl<'a> ExecutionState<'a> {
-    fn new(hub: &'a Hub, device: &'a wgpu::Device, queue: &'a wgpu::Queue, cache: &'a mut BindGroupCache) -> Self {
+    fn new(hub: &'a Hub, device: &'a wgpu::Device, queue: &'a wgpu::Queue, cache: &'a mut BindGroupCache, uniform_buffer_index: usize) -> Self {
         Self {
             render_pipeline_key: None,
             compute_pipeline_key: None,
@@ -898,10 +900,11 @@ impl<'a> ExecutionState<'a> {
             queue,
             plain_data_buffer: None,
             cache,
+            uniform_buffer_index,
         }
     }
 
-    /// Convert BindGroupEntry to ResourceBinding for cache key
+    /// Convert BindGroupEntry to ResourceBinding for cache key (non-dynamic path)
     fn entry_to_binding(entry: &BindGroupEntry) -> ResourceBinding {
         match entry {
             BindGroupEntry::Buffer { binding, buffer_key, offset, size } => {
@@ -915,6 +918,31 @@ impl<'a> ExecutionState<'a> {
             }
             BindGroupEntry::PlainData { binding, offset, size } => {
                 ResourceBinding::PlainData { binding: *binding, offset: *offset, size: *size }
+            }
+        }
+    }
+
+    /// Convert BindGroupEntry to ResourceBinding for cache key (dynamic offset path)
+    /// PlainData entries become PlainDataDynamic with buffer_index, excluding the offset
+    fn entry_to_binding_dynamic(&self, entry: &BindGroupEntry) -> ResourceBinding {
+        match entry {
+            BindGroupEntry::Buffer { binding, buffer_key, offset, size } => {
+                ResourceBinding::Buffer { binding: *binding, key: *buffer_key, offset: *offset, size: *size }
+            }
+            BindGroupEntry::Texture { binding, view_key } => {
+                ResourceBinding::TextureView { binding: *binding, key: *view_key }
+            }
+            BindGroupEntry::Sampler { binding, sampler_key } => {
+                ResourceBinding::Sampler { binding: *binding, key: *sampler_key }
+            }
+            BindGroupEntry::PlainData { binding, size, .. } => {
+                // For dynamic offsets, use PlainDataDynamic which doesn't include offset
+                // The offset is passed separately to set_bind_group
+                ResourceBinding::PlainDataDynamic {
+                    binding: *binding,
+                    buffer_index: self.uniform_buffer_index,
+                    size: *size,
+                }
             }
         }
     }
@@ -959,8 +987,7 @@ impl<'a> ExecutionState<'a> {
                 .rev()
                 .collect();
 
-            // Check if any entry is PlainData - those can't be cached
-            // because the plain_data buffer is recreated each frame
+            // Check if any entry is PlainData - use dynamic offset path for caching
             let has_plain_data = deduped.iter().any(|e| matches!(e, BindGroupEntry::PlainData { .. }));
 
             let hub = self.hub;
@@ -968,18 +995,35 @@ impl<'a> ExecutionState<'a> {
             let plain_data_buffer = self.plain_data_buffer;
 
             if has_plain_data {
-                // Don't cache - create bind group directly
-                let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped.iter()
-                    .filter_map(|entry| make_bind_group_entry(entry, hub, plain_data_buffer))
+                // Use dynamic offsets for PlainData - allows caching across different offsets
+                // Cache key uses PlainDataDynamic (excludes offset, includes buffer_index)
+                let bindings: Vec<ResourceBinding> = deduped.iter()
+                    .map(|e| self.entry_to_binding_dynamic(e))
                     .collect();
 
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Ephemeral Render BindGroup"),
-                    layout,
-                    entries: &wgpu_entries,
+                let cache_key = BindGroupCacheKey {
+                    pipeline_key: PipelineKey::Render(pipeline_key),
+                    group_index,
+                    bindings,
+                };
+
+                // Collect dynamic offsets for PlainData entries (in binding order)
+                let dynamic_offsets = collect_dynamic_offsets(&deduped);
+
+                let bind_group = self.cache.get_or_create(cache_key, || {
+                    // Create bind group with offset=0 for PlainData entries
+                    let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped.iter()
+                        .filter_map(|entry| make_bind_group_entry_dynamic(entry, hub, plain_data_buffer))
+                        .collect();
+
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("Dynamic Offset Render BindGroup"),
+                        layout,
+                        entries: &wgpu_entries,
+                    })
                 });
 
-                render_pass.set_bind_group(group_index, &bind_group, &[]);
+                render_pass.set_bind_group(group_index, bind_group, &dynamic_offsets);
             } else {
                 // Build cache key from deduped entries
                 let bindings: Vec<ResourceBinding> = deduped.iter()
@@ -1051,8 +1095,7 @@ impl<'a> ExecutionState<'a> {
                 .rev()
                 .collect();
 
-            // Check if any entry is PlainData - those can't be cached
-            // because the plain_data buffer is recreated each frame
+            // Check if any entry is PlainData - use dynamic offset path for caching
             let has_plain_data = deduped.iter().any(|e| matches!(e, BindGroupEntry::PlainData { .. }));
 
             let hub = self.hub;
@@ -1060,18 +1103,35 @@ impl<'a> ExecutionState<'a> {
             let plain_data_buffer = self.plain_data_buffer;
 
             if has_plain_data {
-                // Don't cache - create bind group directly
-                let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped.iter()
-                    .filter_map(|entry| make_bind_group_entry(entry, hub, plain_data_buffer))
+                // Use dynamic offsets for PlainData - allows caching across different offsets
+                // Cache key uses PlainDataDynamic (excludes offset, includes buffer_index)
+                let bindings: Vec<ResourceBinding> = deduped.iter()
+                    .map(|e| self.entry_to_binding_dynamic(e))
                     .collect();
 
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Ephemeral Compute BindGroup"),
-                    layout,
-                    entries: &wgpu_entries,
+                let cache_key = BindGroupCacheKey {
+                    pipeline_key: PipelineKey::Compute(pipeline_key),
+                    group_index,
+                    bindings,
+                };
+
+                // Collect dynamic offsets for PlainData entries (in binding order)
+                let dynamic_offsets = collect_dynamic_offsets(&deduped);
+
+                let bind_group = self.cache.get_or_create(cache_key, || {
+                    // Create bind group with offset=0 for PlainData entries
+                    let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped.iter()
+                        .filter_map(|entry| make_bind_group_entry_dynamic(entry, hub, plain_data_buffer))
+                        .collect();
+
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("Dynamic Offset Compute BindGroup"),
+                        layout,
+                        entries: &wgpu_entries,
+                    })
                 });
 
-                compute_pass.set_bind_group(group_index, &bind_group, &[]);
+                compute_pass.set_bind_group(group_index, bind_group, &dynamic_offsets);
             } else {
                 // Build cache key from deduped entries
                 let bindings: Vec<ResourceBinding> = deduped.iter()
@@ -1150,6 +1210,66 @@ fn make_bind_group_entry<'a>(
     }
 }
 
+/// Convert a BindGroupEntry to wgpu::BindGroupEntry for dynamic offset path
+/// PlainData entries use offset=0 (actual offset passed via dynamic offset)
+fn make_bind_group_entry_dynamic<'a>(
+    entry: &BindGroupEntry,
+    hub: &'a Hub,
+    plain_data_buffer: Option<&'a wgpu::Buffer>,
+) -> Option<wgpu::BindGroupEntry<'a>> {
+    match entry {
+        BindGroupEntry::Buffer { binding, buffer_key, offset, size } => {
+            let buffer_entry = hub.buffers.get(*buffer_key)?;
+            Some(wgpu::BindGroupEntry {
+                binding: *binding,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &buffer_entry.gpu,
+                    offset: *offset,
+                    size: std::num::NonZeroU64::new(*size),
+                }),
+            })
+        }
+        BindGroupEntry::Texture { binding, view_key } => {
+            let view = hub.texture_views.get(*view_key)?;
+            Some(wgpu::BindGroupEntry {
+                binding: *binding,
+                resource: wgpu::BindingResource::TextureView(view),
+            })
+        }
+        BindGroupEntry::Sampler { binding, sampler_key } => {
+            let sampler = hub.samplers.get(*sampler_key)?;
+            Some(wgpu::BindGroupEntry {
+                binding: *binding,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            })
+        }
+        BindGroupEntry::PlainData { binding, size, .. } => {
+            // For dynamic offsets: use offset=0, the actual offset is passed to set_bind_group
+            let buffer = plain_data_buffer?;
+            Some(wgpu::BindGroupEntry {
+                binding: *binding,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer,
+                    offset: 0,
+                    size: std::num::NonZeroU64::new(*size as u64),
+                }),
+            })
+        }
+    }
+}
+
+/// Collect dynamic offsets from bind group entries (in binding order)
+fn collect_dynamic_offsets(entries: &[&BindGroupEntry]) -> Vec<u32> {
+    entries.iter()
+        .filter_map(|entry| {
+            match entry {
+                BindGroupEntry::PlainData { offset, .. } => Some(*offset),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
 impl Context {
     /// Execute recorded commands on a wgpu command encoder
     fn execute_commands(
@@ -1162,15 +1282,15 @@ impl Context {
         plain_data: &[u8],
     ) {
         // Reuse uniform buffer for plain data (avoids expensive create_buffer_init every frame)
-        let plain_data_buffer = if !plain_data.is_empty() {
-            let buffer = uniform_buffer.ensure_capacity(&self.device, plain_data.len() as u64);
+        let (plain_data_buffer, uniform_buffer_index) = if !plain_data.is_empty() {
+            let (buffer, buffer_index) = uniform_buffer.ensure_capacity(&self.device, plain_data.len() as u64);
             self.queue.write_buffer(buffer, 0, plain_data);
-            Some(buffer)
+            (Some(buffer), buffer_index)
         } else {
-            None
+            (None, 0)
         };
 
-        let mut state = ExecutionState::new(hub, &self.device, &self.queue, cache);
+        let mut state = ExecutionState::new(hub, &self.device, &self.queue, cache, uniform_buffer_index);
         state.plain_data_buffer = plain_data_buffer;
 
         let mut i = 0;

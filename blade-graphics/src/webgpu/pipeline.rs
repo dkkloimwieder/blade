@@ -96,10 +96,10 @@ fn map_binding_type(
         crate::ShaderBinding::AccelerationStructure => {
             panic!("AccelerationStructure not supported in WebGPU backend")
         }
-        crate::ShaderBinding::Plain { size: _ } => wgpu::BindingType::Buffer {
+        crate::ShaderBinding::Plain { size } => wgpu::BindingType::Buffer {
             ty: wgpu::BufferBindingType::Uniform,
-            has_dynamic_offset: false,
-            min_binding_size: None,
+            has_dynamic_offset: true,
+            min_binding_size: std::num::NonZeroU64::new(size as u64),
         },
     }
 }

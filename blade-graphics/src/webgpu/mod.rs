@@ -491,6 +491,9 @@ pub(super) enum ResourceBinding {
     Sampler { binding: u32, key: SamplerKey },
     /// Uniform data from plain_data buffer (ephemeral, keyed by content hash)
     PlainData { binding: u32, offset: u32, size: u32 },
+    /// Uniform data with dynamic offset - keyed by buffer_index and size, NOT offset
+    /// The offset is passed as a dynamic offset to set_bind_group
+    PlainDataDynamic { binding: u32, buffer_index: usize, size: u32 },
 }
 
 /// Tracks which BindGroups depend on which resources
@@ -534,8 +537,8 @@ impl DependencyTracker {
                         .or_default()
                         .insert(cache_key.clone());
                 }
-                ResourceBinding::PlainData { .. } => {
-                    // Ephemeral, not tracked
+                ResourceBinding::PlainData { .. } | ResourceBinding::PlainDataDynamic { .. } => {
+                    // Ephemeral, not tracked (uniform buffer is internal)
                 }
             }
         }
@@ -701,7 +704,8 @@ impl UniformBuffer {
 
     /// Get buffer for current frame, creating/resizing if needed
     /// Uses ring buffer to avoid GPU stalls from write_buffer
-    fn ensure_capacity(&mut self, device: &wgpu::Device, size: u64) -> &wgpu::Buffer {
+    /// Returns (buffer, buffer_index) for use in cache keying
+    fn ensure_capacity(&mut self, device: &wgpu::Device, size: u64) -> (&wgpu::Buffer, usize) {
         // Rotate to next buffer in ring
         self.current_index = (self.current_index + 1) % UNIFORM_BUFFER_COUNT;
 
@@ -728,7 +732,8 @@ impl UniformBuffer {
             }));
         }
 
-        self.buffers[self.current_index].as_ref().unwrap()
+        let index = self.current_index;
+        (self.buffers[self.current_index].as_ref().unwrap(), index)
     }
 }
 
