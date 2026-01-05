@@ -292,10 +292,7 @@ impl crate::traits::ResourceDevice for Context {
 
         let key = {
             let mut hub = self.hub.write().unwrap();
-            hub.textures.insert(TextureEntry {
-                gpu,
-                format: desc.format,
-            })
+            hub.textures.insert(TextureEntry { gpu })
         };
 
         Texture {

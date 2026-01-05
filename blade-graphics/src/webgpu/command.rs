@@ -126,9 +126,7 @@ impl From<crate::BufferPiece> for BufferPart {
 #[derive(Clone, Debug)]
 pub(super) struct TexturePart {
     pub key: TextureKey,
-    pub format: crate::TextureFormat,
     pub mip_level: u32,
-    pub array_layer: u32,
     pub origin: [u32; 3],
 }
 
@@ -136,9 +134,7 @@ impl From<crate::TexturePiece> for TexturePart {
     fn from(piece: crate::TexturePiece) -> Self {
         Self {
             key: piece.texture.raw,
-            format: piece.texture.format,
             mip_level: piece.mip_level,
-            array_layer: piece.array_layer,
             origin: piece.origin,
         }
     }
@@ -199,10 +195,6 @@ pub(super) enum Command {
         slot: u32,
         buffer: BufferPart,
     },
-    SetBindGroup {
-        index: u32,
-        bind_group_id: u32,  // Index into ephemeral bind groups created at submit
-    },
     Draw {
         first_vertex: u32,
         vertex_count: u32,
@@ -247,10 +239,8 @@ pub(super) enum Command {
         entries: Vec<BindGroupEntry>,
     },
 
-    // Texture initialization
-    InitTexture {
-        key: TextureKey,
-    },
+    // Texture initialization (WebGPU textures are zeroed on creation, so this is a no-op)
+    InitTexture,
 }
 
 /// Render pass color attachment
@@ -463,8 +453,8 @@ impl crate::traits::CommandEncoder for CommandEncoder {
         self.present_frames.clear();
     }
 
-    fn init_texture(&mut self, texture: Texture) {
-        self.commands.push(Command::InitTexture { key: texture.raw });
+    fn init_texture(&mut self, _texture: Texture) {
+        self.commands.push(Command::InitTexture);
     }
 
     fn present(&mut self, frame: Frame) {
@@ -1404,8 +1394,8 @@ impl Context {
                     }
                 }
 
-                Command::InitTexture { key: _ } => {
-                    // WebGPU textures are zeroed on creation
+                Command::InitTexture => {
+                    // WebGPU textures are zeroed on creation - no-op
                 }
 
                 // Render pass - find the matching EndRenderPass and execute as a block
@@ -1500,7 +1490,6 @@ impl Context {
                 Command::SetScissor { .. } |
                 Command::SetStencilReference { .. } |
                 Command::SetVertexBuffer { .. } |
-                Command::SetBindGroup { .. } |
                 Command::Draw { .. } |
                 Command::DrawIndexed { .. } |
                 Command::DrawIndirect { .. } |

@@ -5,26 +5,6 @@ use super::*;
 #[cfg(target_arch = "wasm32")]
 use web_sys;
 
-/// Maps Blade color space to wgpu texture format
-fn map_color_space_to_format(color_space: crate::ColorSpace) -> crate::TextureFormat {
-    match color_space {
-        crate::ColorSpace::Linear => crate::TextureFormat::Bgra8UnormSrgb,
-        crate::ColorSpace::Srgb => crate::TextureFormat::Bgra8Unorm,
-    }
-}
-
-/// Maps Blade TextureFormat to wgpu::TextureFormat
-fn map_texture_format(format: crate::TextureFormat) -> wgpu::TextureFormat {
-    // Common formats - extend as needed
-    match format {
-        crate::TextureFormat::Bgra8Unorm => wgpu::TextureFormat::Bgra8Unorm,
-        crate::TextureFormat::Bgra8UnormSrgb => wgpu::TextureFormat::Bgra8UnormSrgb,
-        crate::TextureFormat::Rgba8Unorm => wgpu::TextureFormat::Rgba8Unorm,
-        crate::TextureFormat::Rgba8UnormSrgb => wgpu::TextureFormat::Rgba8UnormSrgb,
-        _ => wgpu::TextureFormat::Bgra8UnormSrgb, // fallback
-    }
-}
-
 impl Context {
     /// Create a surface from a window handle
     #[cfg(not(target_arch = "wasm32"))]

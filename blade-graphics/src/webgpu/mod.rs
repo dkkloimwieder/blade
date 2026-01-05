@@ -48,7 +48,6 @@ new_key_type! {
 #[derive(Clone, Debug)]
 struct Limits {
     uniform_buffer_alignment: u32,
-    max_bind_groups: u32,
     /// Whether GPU timing queries are supported
     timing_supported: bool,
 }
@@ -368,23 +367,18 @@ struct BufferEntry {
 /// Internal texture entry
 struct TextureEntry {
     gpu: wgpu::Texture,
-    format: crate::TextureFormat,
 }
 
 /// Internal render pipeline entry
 struct RenderPipelineEntry {
     raw: wgpu::RenderPipeline,
-    group_mappings: Box<[ShaderDataMapping]>,
     bind_group_layouts: Vec<wgpu::BindGroupLayout>,
-    topology: crate::PrimitiveTopology,
 }
 
 /// Internal compute pipeline entry
 struct ComputePipelineEntry {
     raw: wgpu::ComputePipeline,
-    group_mappings: Box<[ShaderDataMapping]>,
     bind_group_layouts: Vec<wgpu::BindGroupLayout>,
-    wg_size: [u32; 3],
 }
 
 //=============================================================================

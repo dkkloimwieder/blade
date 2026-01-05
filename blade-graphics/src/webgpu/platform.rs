@@ -94,7 +94,6 @@ pub async fn create_context(
         },
         limits: Limits {
             uniform_buffer_alignment: wgpu_limits.min_uniform_buffer_offset_alignment,
-            max_bind_groups: wgpu_limits.max_bind_groups,
             timing_supported: desc.timing && timing_supported,
         },
         bind_group_cache: RwLock::new(BindGroupCache::new(BIND_GROUP_CACHE_SIZE)),
@@ -174,7 +173,6 @@ pub fn create_context(
         },
         limits: Limits {
             uniform_buffer_alignment: wgpu_limits.min_uniform_buffer_offset_alignment,
-            max_bind_groups: wgpu_limits.max_bind_groups,
             timing_supported: desc.timing && timing_supported,
         },
         bind_group_cache: RwLock::new(BindGroupCache::new(BIND_GROUP_CACHE_SIZE)),

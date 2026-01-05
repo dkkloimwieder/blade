@@ -418,9 +418,7 @@ impl crate::traits::ShaderDevice for Context {
         let mut hub = self.hub.write().unwrap();
         let key = hub.compute_pipelines.insert(ComputePipelineEntry {
             raw,
-            group_mappings: group_mappings.clone(),
             bind_group_layouts,
-            wg_size: shader.wg_size,
         });
 
         ComputePipeline {
@@ -605,9 +603,7 @@ impl crate::traits::ShaderDevice for Context {
         let mut hub = self.hub.write().unwrap();
         let key = hub.render_pipelines.insert(RenderPipelineEntry {
             raw,
-            group_mappings: group_mappings.clone(),
             bind_group_layouts,
-            topology: desc.primitive.topology,
         });
 
         RenderPipeline {
