@@ -1,6 +1,7 @@
 //! Pipeline creation for WebGPU backend
 
 use super::*;
+use super::resource::map_compare_function;
 
 /// Create a pipeline with error scope for validation.
 /// On native, blocks to check errors synchronously.
@@ -146,19 +147,7 @@ fn map_face(face: crate::Face) -> wgpu::Face {
     }
 }
 
-/// Map Blade CompareFunction to wgpu
-fn map_compare_function(compare: crate::CompareFunction) -> wgpu::CompareFunction {
-    match compare {
-        crate::CompareFunction::Never => wgpu::CompareFunction::Never,
-        crate::CompareFunction::Less => wgpu::CompareFunction::Less,
-        crate::CompareFunction::Equal => wgpu::CompareFunction::Equal,
-        crate::CompareFunction::LessEqual => wgpu::CompareFunction::LessEqual,
-        crate::CompareFunction::Greater => wgpu::CompareFunction::Greater,
-        crate::CompareFunction::NotEqual => wgpu::CompareFunction::NotEqual,
-        crate::CompareFunction::GreaterEqual => wgpu::CompareFunction::GreaterEqual,
-        crate::CompareFunction::Always => wgpu::CompareFunction::Always,
-    }
-}
+// map_compare_function imported from resource.rs via super::*
 
 /// Map Blade StencilOperation to wgpu
 fn map_stencil_operation(op: crate::StencilOperation) -> wgpu::StencilOperation {

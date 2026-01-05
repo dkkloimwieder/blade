@@ -53,6 +53,16 @@ struct Limits {
 }
 
 //=============================================================================
+// Constants
+//=============================================================================
+
+/// Maximum bind groups cached before LRU eviction
+pub(super) const BIND_GROUP_CACHE_SIZE: usize = 1024;
+
+/// WebGPU requires bytes_per_row to be a multiple of 256 for texture copies
+pub(super) const BYTES_PER_ROW_ALIGNMENT: u32 = 256;
+
+//=============================================================================
 // GPU Timing Infrastructure
 //=============================================================================
 

@@ -77,9 +77,6 @@ pub async fn create_context(
     let adapter_info = adapter.get_info();
     let wgpu_limits: wgpu::Limits = device.limits();
 
-    // Max cache size: 1024 bind groups should be plenty for most apps
-    const BIND_GROUP_CACHE_SIZE: usize = 1024;
-
     Ok(Context {
         instance,
         adapter,
@@ -155,9 +152,6 @@ pub fn create_context(
 
     let adapter_info = adapter.get_info();
     let wgpu_limits: wgpu::Limits = device.limits();
-
-    // Max cache size: 1024 bind groups should be plenty for most apps
-    const BIND_GROUP_CACHE_SIZE: usize = 1024;
 
     Ok(Context {
         instance,

@@ -1286,8 +1286,9 @@ impl Context {
                         // Single row - can use None
                         None
                     } else {
-                        // Must be 256-aligned for multi-row copies
-                        Some((*bytes_per_row + 255) & !255)
+                        // Must be aligned for multi-row copies
+                        let mask = BYTES_PER_ROW_ALIGNMENT - 1;
+                        Some((*bytes_per_row + mask) & !mask)
                     };
                     encoder.copy_buffer_to_texture(
                         wgpu::TexelCopyBufferInfo {
@@ -1319,11 +1320,12 @@ impl Context {
                 Command::CopyTextureToBuffer { src, dst, bytes_per_row, size } => {
                     let src_tex = &hub.textures.get(src.key).expect("Invalid src texture").gpu;
                     let dst_buf = &hub.buffers.get(dst.key).expect("Invalid dst buffer").gpu;
-                    // WebGPU requires bytes_per_row to be multiple of 256 for multi-row copies
+                    // WebGPU requires bytes_per_row to be aligned for multi-row copies
                     let aligned_bpr = if size.height <= 1 && size.depth <= 1 {
                         None
                     } else {
-                        Some((*bytes_per_row + 255) & !255)
+                        let mask = BYTES_PER_ROW_ALIGNMENT - 1;
+                        Some((*bytes_per_row + mask) & !mask)
                     };
                     encoder.copy_texture_to_buffer(
                         wgpu::TexelCopyTextureInfo {

@@ -102,7 +102,7 @@ fn map_mipmap_filter_mode(mode: crate::FilterMode) -> wgpu::MipmapFilterMode {
     }
 }
 
-fn map_compare_function(func: crate::CompareFunction) -> wgpu::CompareFunction {
+pub(super) fn map_compare_function(func: crate::CompareFunction) -> wgpu::CompareFunction {
     match func {
         crate::CompareFunction::Never => wgpu::CompareFunction::Never,
         crate::CompareFunction::Less => wgpu::CompareFunction::Less,
