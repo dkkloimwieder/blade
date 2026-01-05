@@ -781,7 +781,10 @@ impl crate::traits::CommandDevice for Context {
                 if let Some(view_key) = frame.view_key {
                     hub.texture_views.remove(view_key);
                 }
-                frame.texture.present();
+                // Only present if frame is valid (texture was successfully acquired)
+                if let Some(texture) = frame.texture {
+                    texture.present();
+                }
             }
         }
 

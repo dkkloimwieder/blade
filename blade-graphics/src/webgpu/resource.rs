@@ -1,7 +1,6 @@
 //! Resource creation for WebGPU backend
 
 use super::*;
-use std::sync::atomic::Ordering;
 
 //=============================================================================
 // Texture Format Mapping
@@ -208,7 +207,7 @@ impl crate::traits::ResourceDevice for Context {
             hub.buffers.insert(BufferEntry {
                 gpu,
                 shadow,
-                dirty: AtomicBool::new(false),
+                dirty_range: Mutex::new(None),
             })
         };
 
@@ -220,11 +219,8 @@ impl crate::traits::ResourceDevice for Context {
     }
 
     fn sync_buffer(&self, buffer: Buffer) {
-        // Mark the buffer as dirty so it gets synced before next submit
-        let hub = self.hub.read().unwrap();
-        if let Some(entry) = hub.buffers.get(buffer.raw) {
-            entry.dirty.store(true, Ordering::Release);
-        }
+        // Mark the entire buffer as dirty so it gets synced before next submit
+        self.mark_buffer_dirty(buffer);
     }
 
     fn destroy_buffer(&self, buffer: Buffer) {

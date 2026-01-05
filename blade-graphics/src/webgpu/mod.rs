@@ -9,8 +9,8 @@ mod resource;
 mod surface;
 
 use slotmap::{new_key_type, SlotMap};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::RwLock;
+use std::ops::Range;
+use std::sync::{Mutex, RwLock};
 use std::marker::PhantomData;
 
 
@@ -369,9 +369,10 @@ struct BufferEntry {
     gpu: wgpu::Buffer,
     /// CPU shadow memory for Upload/Shared buffers
     shadow: Option<Box<[u8]>>,
-    /// True if shadow memory is dirty and needs sync.
-    /// Using AtomicBool allows marking dirty without write lock.
-    dirty: AtomicBool,
+    /// Dirty byte range that needs sync to GPU.
+    /// None = clean, Some(range) = dirty region.
+    /// Ranges are merged on overlap for efficient uploads.
+    dirty_range: Mutex<Option<Range<u64>>>,
 }
 
 /// Internal texture entry
@@ -807,26 +808,68 @@ impl Context {
         }
     }
 
-    /// Mark a buffer as dirty (called when user writes to shadow memory)
+    /// Mark a buffer as dirty (entire buffer).
+    /// Called when user writes to shadow memory via buffer.data().
     pub fn mark_buffer_dirty(&self, buffer: Buffer) {
+        self.mark_buffer_dirty_range(buffer, 0, buffer.size);
+    }
+
+    /// Mark a specific range of a buffer as dirty.
+    /// More efficient than marking the entire buffer when only a portion changed.
+    ///
+    /// # Arguments
+    /// * `buffer` - The buffer to mark dirty
+    /// * `offset` - Byte offset from start of buffer
+    /// * `size` - Number of bytes that changed
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Write to a specific region of the buffer
+    /// unsafe {
+    ///     let ptr = buffer.data().add(offset as usize);
+    ///     std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+    /// }
+    /// // Only sync the modified region
+    /// context.sync_buffer_range(buffer, offset, data.len() as u64);
+    /// ```
+    pub fn sync_buffer_range(&self, buffer: Buffer, offset: u64, size: u64) {
+        self.mark_buffer_dirty_range(buffer, offset, size);
+    }
+
+    /// Internal: mark a specific range as dirty (will be synced at next submit)
+    fn mark_buffer_dirty_range(&self, buffer: Buffer, offset: u64, size: u64) {
         let hub = self.hub.read().unwrap();
         if let Some(entry) = hub.buffers.get(buffer.raw) {
-            entry.dirty.store(true, Ordering::Release);
+            let new_range = offset..(offset + size);
+            let mut dirty = entry.dirty_range.lock().unwrap();
+            *dirty = Some(match dirty.take() {
+                None => new_range,
+                Some(existing) => {
+                    // Merge overlapping or adjacent ranges
+                    let start = existing.start.min(new_range.start);
+                    let end = existing.end.max(new_range.end);
+                    start..end
+                }
+            });
         }
     }
 
     /// Sync all dirty shadow buffers to GPU.
     /// MUST be called exactly once, immediately before queue.submit()
+    /// Only uploads the dirty byte ranges, not entire buffers.
     fn sync_dirty_buffers(&self) {
         let hub = self.hub.read().unwrap();
         for (_key, entry) in hub.buffers.iter() {
-            // Use Acquire ordering to see all writes to shadow memory
-            if entry.dirty.load(Ordering::Acquire) {
+            let range = entry.dirty_range.lock().unwrap().take();
+            if let Some(range) = range {
                 if let Some(ref shadow) = entry.shadow {
-                    self.queue.write_buffer(&entry.gpu, 0, shadow);
+                    // Only upload the dirty range
+                    let start = range.start as usize;
+                    let end = (range.end as usize).min(shadow.len());
+                    if start < end {
+                        self.queue.write_buffer(&entry.gpu, range.start, &shadow[start..end]);
+                    }
                 }
-                // Clear dirty flag with Release ordering
-                entry.dirty.store(false, Ordering::Release);
             }
         }
     }
@@ -884,7 +927,8 @@ impl Surface {
 
 #[derive(Debug)]
 pub struct Frame {
-    texture: wgpu::SurfaceTexture,
+    /// The surface texture, None if acquisition failed (e.g., surface out of date)
+    texture: Option<wgpu::SurfaceTexture>,
     /// Key for the frame's texture view in the hub
     view_key: Option<TextureViewKey>,
     target_size: [u16; 2],
@@ -899,6 +943,13 @@ unsafe impl Send for Frame {}
 unsafe impl Sync for Frame {}
 
 impl Frame {
+    /// Check if this frame is valid and can be rendered to.
+    /// Returns false if frame acquisition failed (e.g., surface out of date).
+    /// When false, the caller should skip rendering and reconfigure the surface.
+    pub fn is_valid(&self) -> bool {
+        self.texture.is_some()
+    }
+
     pub fn texture(&self) -> Texture {
         Texture {
             raw: TextureKey::default(),

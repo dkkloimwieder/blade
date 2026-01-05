@@ -186,22 +186,71 @@ impl Surface {
     ///
     /// The frame's texture view is stored in the hub so it can be used
     /// in render passes. It will be removed when the frame is presented.
+    ///
+    /// Returns a frame with `is_valid() == false` if acquisition failed due to:
+    /// - `Timeout`: Transient failure, can retry next frame
+    /// - `Outdated`: Surface configuration changed, caller should reconfigure
+    /// - `Lost`: Surface was lost, caller should recreate
+    ///
+    /// Panics only on unrecoverable errors (OutOfMemory).
     pub fn acquire_frame(&self) -> Frame {
-        let texture = self.raw.get_current_texture().expect("Failed to acquire frame");
-        let view = texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let size = [
             self.config.width.min(u16::MAX as u32) as u16,
             self.config.height.min(u16::MAX as u32) as u16,
         ];
 
-        // Store view in hub so render pass can look it up by key
-        let view_key = self.hub.write().unwrap().texture_views.insert(view);
+        match self.raw.get_current_texture() {
+            Ok(texture) => {
+                let view = texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                // Store view in hub so render pass can look it up by key
+                let view_key = self.hub.write().unwrap().texture_views.insert(view);
 
-        Frame {
-            texture,
-            view_key: Some(view_key),
-            target_size: size,
-            format: self.format,
+                Frame {
+                    texture: Some(texture),
+                    view_key: Some(view_key),
+                    target_size: size,
+                    format: self.format,
+                }
+            }
+            Err(wgpu::SurfaceError::Timeout) => {
+                log::warn!("Surface acquire timeout - skipping frame");
+                Frame {
+                    texture: None,
+                    view_key: None,
+                    target_size: size,
+                    format: self.format,
+                }
+            }
+            Err(wgpu::SurfaceError::Outdated) => {
+                log::warn!("Surface outdated - needs reconfiguration");
+                Frame {
+                    texture: None,
+                    view_key: None,
+                    target_size: size,
+                    format: self.format,
+                }
+            }
+            Err(wgpu::SurfaceError::Lost) => {
+                log::warn!("Surface lost - needs recreation");
+                Frame {
+                    texture: None,
+                    view_key: None,
+                    target_size: size,
+                    format: self.format,
+                }
+            }
+            Err(wgpu::SurfaceError::OutOfMemory) => {
+                panic!("Failed to acquire frame: out of memory")
+            }
+            Err(wgpu::SurfaceError::Other) => {
+                log::error!("Surface acquire failed with unknown error");
+                Frame {
+                    texture: None,
+                    view_key: None,
+                    target_size: size,
+                    format: self.format,
+                }
+            }
         }
     }
 }

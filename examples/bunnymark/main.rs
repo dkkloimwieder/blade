@@ -479,11 +479,40 @@ impl Example {
     }
 }
 
+/// Parse initial bunny count from CLI args or environment
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_bunny_count() -> usize {
+    // Check --bunny-count=N or --bunny-count N
+    let args: Vec<String> = std::env::args().collect();
+    for i in 0..args.len() {
+        if args[i].starts_with("--bunny-count=") {
+            if let Ok(n) = args[i].trim_start_matches("--bunny-count=").parse() {
+                return n;
+            }
+        } else if args[i] == "--bunny-count" && i + 1 < args.len() {
+            if let Ok(n) = args[i + 1].parse() {
+                return n;
+            }
+        }
+    }
+    // Check BUNNY_COUNT env var
+    if let Ok(val) = std::env::var("BUNNY_COUNT") {
+        if let Ok(n) = val.parse() {
+            return n;
+        }
+    }
+    // Default: 1 bunny (original behavior)
+    1
+}
+
 /// Main for native and GLES WASM (sync init)
 #[cfg(not(all(target_arch = "wasm32", blade_wgpu)))]
 fn main() {
     #[cfg(not(target_arch = "wasm32"))]
     env_logger::init();
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let initial_bunny_count = parse_bunny_count();
 
     let event_loop = winit::event_loop::EventLoop::new().unwrap();
     let window_attributes =
@@ -508,6 +537,26 @@ fn main() {
     }
 
     let mut example = Example::new(&window);
+
+    // Spawn initial bunnies based on CLI arg or env var
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use nanorand::Rng as _;
+        let spawn_count = initial_bunny_count.min(MAX_BUNNIES);
+        for _ in 0..spawn_count {
+            let speed = example.rng.generate_range(-MAX_VELOCITY..=MAX_VELOCITY) as f32;
+            example.pending_bunnies.push(InstanceData {
+                position: [0.0, 0.5 * (example.window_size.height as f32)],
+                velocity: [speed, 0.0],
+                color: example.rng.generate::<u32>(),
+                pad: 0,
+            });
+        }
+        if spawn_count > 1 {
+            println!("Starting with {} bunnies", spawn_count);
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     let mut last_snapshot = std::time::Instant::now();
     #[cfg(target_arch = "wasm32")]
