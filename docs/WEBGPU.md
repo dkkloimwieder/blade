@@ -12,14 +12,14 @@ The WebGPU backend provides a modern, portable GPU abstraction using the wgpu li
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `mod.rs` | 660 | Context, Hub, resource handles, bind group cache |
-| `command.rs` | 1,602 | Command recording, deferred execution, pass encoding |
-| `pipeline.rs` | 630 | Shader compilation (WGSL→WGSL), pipeline creation |
-| `resource.rs` | 436 | Buffer, texture, sampler creation |
-| `surface.rs` | 228 | Surface/swapchain management |
-| `platform.rs` | 183 | Platform-specific initialization (native/WASM) |
+| `mod.rs` | 941 | Context, Hub, resource handles, bind group cache |
+| `command.rs` | 1,751 | Command recording, deferred execution, pass encoding |
+| `pipeline.rs` | 620 | Shader compilation (WGSL→WGSL), pipeline creation |
+| `resource.rs` | 432 | Buffer, texture, sampler creation |
+| `surface.rs` | 207 | Surface/swapchain management |
+| `platform.rs` | 182 | Platform-specific initialization (native/WASM) |
 
-**Total**: ~3,740 lines
+**Total**: ~4,133 lines
 
 ### Backend Selection
 
@@ -90,7 +90,7 @@ pub struct Sampler {
 
 ### 2.2 The Hub: Central Resource Storage
 
-**File**: `mod.rs:177-197`
+**File**: `mod.rs:415-422`
 
 The Hub stores actual wgpu resources, accessed via slotmap keys:
 
@@ -112,7 +112,7 @@ struct Hub {
 
 ### 2.3 Context Structure
 
-**File**: `mod.rs:491-505`
+**File**: `mod.rs:742-758`
 
 ```rust
 pub struct Context {
@@ -125,6 +125,7 @@ pub struct Context {
     limits: Limits,
     bind_group_cache: RwLock<BindGroupCache>,
     uniform_buffer: RwLock<UniformBuffer>,  // Triple-buffered for performance
+    timing_pool: RwLock<TimingQueryPool>,   // GPU timing queries
 }
 ```
 
@@ -233,7 +234,7 @@ pub struct CommandEncoder {
 
 ### 4.2 Command Enum
 
-**File**: `command.rs:147-251`
+**File**: `command.rs:143-243`
 
 ```rust
 pub(super) enum Command {
@@ -245,7 +246,7 @@ pub(super) enum Command {
     CopyTextureToTexture { src, dst, size },
 
     // Render pass commands
-    BeginRenderPass { color_attachments, depth_attachment },
+    BeginRenderPass { label, color_attachments, depth_attachment },
     EndRenderPass,
     SetRenderPipeline { key },
     SetViewport { viewport },
@@ -258,7 +259,7 @@ pub(super) enum Command {
     DrawIndexedIndirect { index_buffer, index_format, indirect_buffer },
 
     // Compute pass commands
-    BeginComputePass,
+    BeginComputePass { label },
     EndComputePass,
     SetComputePipeline { key },
     Dispatch { groups },
@@ -267,8 +268,8 @@ pub(super) enum Command {
     // Bind group recording (resolved at submit time)
     RecordBindGroup { group_index, entries },
 
-    // Texture initialization
-    InitTexture { key },
+    // Texture initialization (WebGPU textures are zeroed on creation, so this is a no-op)
+    InitTexture,
 }
 ```
 
@@ -433,7 +434,7 @@ fn execute_render_pass(&self, hub: &Hub, encoder: &mut wgpu::CommandEncoder,
 
 ### 6.1 Cache Architecture
 
-**File**: `mod.rs:206-430`
+**File**: `mod.rs:446-610`
 
 ```rust
 pub(super) struct BindGroupCacheKey {
@@ -757,7 +758,7 @@ pub fn acquire_frame(&self) -> Frame {
 
 ### 10.1 SyncPoint
 
-**File**: `mod.rs:656-660`
+**File**: `mod.rs:938-941`
 
 ```rust
 #[derive(Clone, Debug)]
@@ -848,12 +849,11 @@ pub fn capabilities(&self) -> crate::Capabilities {
 }
 ```
 
-**File**: `mod.rs:47-53`
+**File**: `mod.rs:49-53`
 
 ```rust
 struct Limits {
     uniform_buffer_alignment: u32,
-    max_bind_groups: u32,
     timing_supported: bool,
 }
 ```
