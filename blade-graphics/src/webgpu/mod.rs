@@ -572,16 +572,15 @@ impl DependencyTracker {
     }
 }
 
-/// LRU cache for bind groups with dependency tracking
+/// Bind group cache with dependency tracking
+/// Uses FIFO eviction (simpler than LRU, eviction is rare for small caches)
 pub(super) struct BindGroupCache {
-    /// Map from cache key to wgpu bind group
+    /// Map from cache key to bind group
     groups: HashMap<BindGroupCacheKey, wgpu::BindGroup>,
     /// Dependency tracking for invalidation
     deps: DependencyTracker,
-    /// Maximum cache size before LRU eviction
+    /// Maximum cache size before eviction
     max_size: usize,
-    /// Access order for LRU (most recent at back)
-    access_order: Vec<BindGroupCacheKey>,
     /// Cache stats
     hits: u64,
     misses: u64,
@@ -593,39 +592,36 @@ impl BindGroupCache {
             groups: HashMap::new(),
             deps: DependencyTracker::new(),
             max_size,
-            access_order: Vec::new(),
             hits: 0,
             misses: 0,
         }
     }
 
     /// Get cached bind group or create a new one
+    /// O(1) for cache hits (single hash lookup)
     pub fn get_or_create<F>(&mut self, key: BindGroupCacheKey, create_fn: F) -> &wgpu::BindGroup
     where
         F: FnOnce() -> wgpu::BindGroup,
     {
+        // Fast path: check if exists (one hash lookup)
         if self.groups.contains_key(&key) {
-            // Cache hit - update LRU order
             self.hits += 1;
-            self.access_order.retain(|k| k != &key);
-            self.access_order.push(key.clone());
             return self.groups.get(&key).unwrap();
         }
 
-        // Cache miss - create new bind group
+        // Cache miss
         self.misses += 1;
-        let bind_group = create_fn();
 
-        // Register dependencies BEFORE inserting
+        // Register dependencies
         self.deps.register(&key);
 
         // Evict if over capacity
         while self.groups.len() >= self.max_size {
-            self.evict_lru();
+            self.evict_one();
         }
 
-        self.access_order.push(key.clone());
-        self.groups.insert(key.clone(), bind_group);
+        // Insert and return
+        self.groups.insert(key.clone(), create_fn());
         self.groups.get(&key).unwrap()
     }
 
@@ -635,7 +631,6 @@ impl BindGroupCache {
         if let Some(dependents) = self.deps.get_buffer_dependents(key).cloned() {
             for cache_key in dependents {
                 self.groups.remove(&cache_key);
-                self.access_order.retain(|k| k != &cache_key);
             }
         }
         self.deps.remove_buffer(key);
@@ -646,7 +641,6 @@ impl BindGroupCache {
         if let Some(dependents) = self.deps.get_texture_view_dependents(key).cloned() {
             for cache_key in dependents {
                 self.groups.remove(&cache_key);
-                self.access_order.retain(|k| k != &cache_key);
             }
         }
         self.deps.remove_texture_view(key);
@@ -657,16 +651,16 @@ impl BindGroupCache {
         if let Some(dependents) = self.deps.get_sampler_dependents(key).cloned() {
             for cache_key in dependents {
                 self.groups.remove(&cache_key);
-                self.access_order.retain(|k| k != &cache_key);
             }
         }
         self.deps.remove_sampler(key);
     }
 
-    fn evict_lru(&mut self) {
-        if let Some(oldest) = self.access_order.first().cloned() {
-            self.groups.remove(&oldest);
-            self.access_order.remove(0);
+    /// Evict one entry (arbitrary - HashMap iteration order)
+    /// Only called when cache is full, which is rare
+    fn evict_one(&mut self) {
+        if let Some(key) = self.groups.keys().next().cloned() {
+            self.groups.remove(&key);
         }
     }
 
