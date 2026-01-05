@@ -454,8 +454,22 @@ pub(super) struct BindGroupCacheKey {
     pipeline_key: PipelineKey,
     /// Group index within the pipeline
     group_index: u32,
-    /// Sorted list of resource bindings
+    /// List of resource bindings
     bindings: Vec<ResourceBinding>,
+}
+
+impl BindGroupCacheKey {
+    /// Create a new cache key from an iterator of bindings
+    pub fn new<I>(pipeline_key: PipelineKey, group_index: u32, bindings_iter: I) -> Self
+    where
+        I: Iterator<Item = ResourceBinding>,
+    {
+        Self {
+            pipeline_key,
+            group_index,
+            bindings: bindings_iter.collect(),
+        }
+    }
 }
 
 impl PartialEq for BindGroupCacheKey {

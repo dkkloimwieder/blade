@@ -997,15 +997,11 @@ impl<'a> ExecutionState<'a> {
             if has_plain_data {
                 // Use dynamic offsets for PlainData - allows caching across different offsets
                 // Cache key uses PlainDataDynamic (excludes offset, includes buffer_index)
-                let bindings: Vec<ResourceBinding> = deduped.iter()
-                    .map(|e| self.entry_to_binding_dynamic(e))
-                    .collect();
-
-                let cache_key = BindGroupCacheKey {
-                    pipeline_key: PipelineKey::Render(pipeline_key),
+                let cache_key = BindGroupCacheKey::new(
+                    PipelineKey::Render(pipeline_key),
                     group_index,
-                    bindings,
-                };
+                    deduped.iter().map(|e| self.entry_to_binding_dynamic(e)),
+                );
 
                 // Collect dynamic offsets for PlainData entries (in binding order)
                 let dynamic_offsets = collect_dynamic_offsets(&deduped);
@@ -1026,15 +1022,11 @@ impl<'a> ExecutionState<'a> {
                 render_pass.set_bind_group(group_index, bind_group, &dynamic_offsets);
             } else {
                 // Build cache key from deduped entries
-                let bindings: Vec<ResourceBinding> = deduped.iter()
-                    .map(|e| Self::entry_to_binding(e))
-                    .collect();
-
-                let cache_key = BindGroupCacheKey {
-                    pipeline_key: PipelineKey::Render(pipeline_key),
+                let cache_key = BindGroupCacheKey::new(
+                    PipelineKey::Render(pipeline_key),
                     group_index,
-                    bindings,
-                };
+                    deduped.iter().map(|e| Self::entry_to_binding(e)),
+                );
 
                 let bind_group = self.cache.get_or_create(cache_key, || {
                     let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped.iter()
@@ -1105,15 +1097,11 @@ impl<'a> ExecutionState<'a> {
             if has_plain_data {
                 // Use dynamic offsets for PlainData - allows caching across different offsets
                 // Cache key uses PlainDataDynamic (excludes offset, includes buffer_index)
-                let bindings: Vec<ResourceBinding> = deduped.iter()
-                    .map(|e| self.entry_to_binding_dynamic(e))
-                    .collect();
-
-                let cache_key = BindGroupCacheKey {
-                    pipeline_key: PipelineKey::Compute(pipeline_key),
+                let cache_key = BindGroupCacheKey::new(
+                    PipelineKey::Compute(pipeline_key),
                     group_index,
-                    bindings,
-                };
+                    deduped.iter().map(|e| self.entry_to_binding_dynamic(e)),
+                );
 
                 // Collect dynamic offsets for PlainData entries (in binding order)
                 let dynamic_offsets = collect_dynamic_offsets(&deduped);
@@ -1134,15 +1122,11 @@ impl<'a> ExecutionState<'a> {
                 compute_pass.set_bind_group(group_index, bind_group, &dynamic_offsets);
             } else {
                 // Build cache key from deduped entries
-                let bindings: Vec<ResourceBinding> = deduped.iter()
-                    .map(|e| Self::entry_to_binding(e))
-                    .collect();
-
-                let cache_key = BindGroupCacheKey {
-                    pipeline_key: PipelineKey::Compute(pipeline_key),
+                let cache_key = BindGroupCacheKey::new(
+                    PipelineKey::Compute(pipeline_key),
                     group_index,
-                    bindings,
-                };
+                    deduped.iter().map(|e| Self::entry_to_binding(e)),
+                );
 
                 let bind_group = self.cache.get_or_create(cache_key, || {
                     let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped.iter()
