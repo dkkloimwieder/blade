@@ -134,7 +134,8 @@ pub(super) struct TimingQueryPool {
     current_frame: usize,
     /// Timestamp period in nanoseconds per tick (from queue)
     timestamp_period: f32,
-    /// Collected timing results from previous frame
+    /// Collected timing results from previous frame (native only)
+    #[cfg(not(target_arch = "wasm32"))]
     results: Vec<(String, std::time::Duration)>,
 }
 
@@ -144,6 +145,7 @@ impl TimingQueryPool {
             frames: None,
             current_frame: 0,
             timestamp_period: 1.0, // Default, will be set from queue
+            #[cfg(not(target_arch = "wasm32"))]
             results: Vec::new(),
         }
     }
