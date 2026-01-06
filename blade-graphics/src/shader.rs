@@ -149,8 +149,17 @@ impl super::Shader {
                 _ => continue,
             };
 
-            // Skip if already bound (e.g., from processing another entry point)
-            if var.binding.is_some() {
+            // If already bound (explicit @group/@binding or from another entry point),
+            // still track visibility and access but don't reassign binding
+            if let Some(ref binding) = var.binding {
+                let group_index = binding.group as usize;
+                let binding_index = binding.binding as usize;
+                if let Some(info) = sd_infos.get_mut(group_index) {
+                    info.visibility |= naga_stage.into();
+                    if let Some(access) = info.binding_access.get_mut(binding_index) {
+                        *access |= var_access;
+                    }
+                }
                 continue;
             }
             let var_name = var.name.as_ref().unwrap();

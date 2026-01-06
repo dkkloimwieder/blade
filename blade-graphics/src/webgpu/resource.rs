@@ -197,6 +197,7 @@ impl crate::traits::ResourceDevice for Context {
                 usage |= wgpu::BufferUsages::UNIFORM;
                 usage |= wgpu::BufferUsages::VERTEX;
                 usage |= wgpu::BufferUsages::INDEX;
+                usage |= wgpu::BufferUsages::INDIRECT;
 
                 let mut shadow_data = vec![0u8; desc.size as usize].into_boxed_slice();
                 let ptr = shadow_data.as_mut_ptr();
