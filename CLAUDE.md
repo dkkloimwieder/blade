@@ -135,6 +135,18 @@ bd sync                                  # Sync with git (run at session end)
 3. **Completing work**: `bd close` each issue with a reason
 4. **Session end**: `git pull --rebase && bd sync && git push`
 
+## CRITICAL: NEVER KILL USER PROCESSES
+
+**NEVER run `pkill` or `kill` on:**
+- `chrome` / `google-chrome` / `chromium`
+- `firefox`
+- Any browser process
+- Any user application
+
+**The user has important work open in these applications.**
+
+If you need a fresh browser instance for testing, launch a NEW instance with `--user-data-dir=/tmp/test-profile` instead.
+
 ## Commit Signoff
 
 **ALWAYS sign off commits as `--kaalin`** at the end of the commit message. No other signoff or attribution.
