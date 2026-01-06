@@ -119,26 +119,44 @@ pub(super) fn map_compare_function(func: crate::CompareFunction) -> wgpu::Compar
 //=============================================================================
 
 impl Context {
+    /// Returns an error because acceleration structures are not supported in WebGPU.
+    ///
+    /// Check `Context::capabilities().ray_query` before attempting to use ray tracing.
     pub fn get_bottom_level_acceleration_structure_sizes(
         &self,
         _meshes: &[crate::AccelerationStructureMesh],
-    ) -> crate::AccelerationStructureSizes {
-        panic!("Acceleration structures are not supported in WebGPU backend")
+    ) -> Result<crate::AccelerationStructureSizes, crate::UnsupportedFeatureError> {
+        Err(crate::UnsupportedFeatureError {
+            feature: "Acceleration structures",
+            capability_hint: "ray_query",
+        })
     }
 
+    /// Returns an error because acceleration structures are not supported in WebGPU.
+    ///
+    /// Check `Context::capabilities().ray_query` before attempting to use ray tracing.
     pub fn get_top_level_acceleration_structure_sizes(
         &self,
         _instance_count: u32,
-    ) -> crate::AccelerationStructureSizes {
-        panic!("Acceleration structures are not supported in WebGPU backend")
+    ) -> Result<crate::AccelerationStructureSizes, crate::UnsupportedFeatureError> {
+        Err(crate::UnsupportedFeatureError {
+            feature: "Acceleration structures",
+            capability_hint: "ray_query",
+        })
     }
 
+    /// Returns an error because acceleration structures are not supported in WebGPU.
+    ///
+    /// Check `Context::capabilities().ray_query` before attempting to use ray tracing.
     pub fn create_acceleration_structure_instance_buffer(
         &self,
         _instances: &[crate::AccelerationStructureInstance],
         _bottom_level: &[AccelerationStructure],
-    ) -> Buffer {
-        panic!("Acceleration structures are not supported in WebGPU backend")
+    ) -> Result<Buffer, crate::UnsupportedFeatureError> {
+        Err(crate::UnsupportedFeatureError {
+            feature: "Acceleration structures",
+            capability_hint: "ray_query",
+        })
     }
 }
 
@@ -185,7 +203,10 @@ impl crate::traits::ResourceDevice for Context {
                 (Some(shadow_data), ptr)
             }
             crate::Memory::External(_) => {
-                panic!("External memory is not supported in WebGPU backend")
+                panic!(
+                    "External memory is not supported in WebGPU. \
+                     Use Memory::Device, Memory::Upload, or Memory::Shared instead."
+                )
             }
         };
 
@@ -419,10 +440,16 @@ impl crate::traits::ResourceDevice for Context {
         &self,
         _desc: crate::AccelerationStructureDesc,
     ) -> AccelerationStructure {
-        panic!("Acceleration structures are not supported in WebGPU backend")
+        panic!(
+            "Acceleration structures are not supported in WebGPU. \
+             Check `Context::capabilities().ray_query` before using ray tracing features."
+        )
     }
 
     fn destroy_acceleration_structure(&self, _acceleration_structure: AccelerationStructure) {
-        panic!("Acceleration structures are not supported in WebGPU backend")
+        panic!(
+            "Acceleration structures are not supported in WebGPU. \
+             Check `Context::capabilities().ray_query` before using ray tracing features."
+        )
     }
 }

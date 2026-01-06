@@ -58,7 +58,10 @@ impl crate::ShaderBindable for TextureView {
 
 impl<'a, const N: crate::ResourceIndex> crate::ShaderBindable for &'a crate::TextureArray<N> {
     fn bind_to(&self, _ctx: &mut PipelineContext, _index: u32) {
-        unimplemented!("TextureArray binding not supported in WebGPU base spec")
+        unimplemented!(
+            "TextureArray binding is not supported in WebGPU base spec. \
+             Use individual texture bindings instead."
+        )
     }
 }
 
@@ -94,13 +97,19 @@ impl crate::ShaderBindable for crate::BufferPiece {
 
 impl<'a, const N: crate::ResourceIndex> crate::ShaderBindable for &'a crate::BufferArray<N> {
     fn bind_to(&self, _ctx: &mut PipelineContext, _index: u32) {
-        unimplemented!("BufferArray binding not supported in WebGPU base spec")
+        unimplemented!(
+            "BufferArray binding is not supported in WebGPU base spec. \
+             Use individual buffer bindings instead."
+        )
     }
 }
 
 impl crate::ShaderBindable for AccelerationStructure {
     fn bind_to(&self, _ctx: &mut PipelineContext, _index: u32) {
-        panic!("AccelerationStructure not supported in WebGPU backend")
+        panic!(
+            "AccelerationStructure binding is not supported in WebGPU. \
+             Check `Context::capabilities().ray_query` before using ray tracing features."
+        )
     }
 }
 
@@ -433,8 +442,14 @@ impl CommandEncoder {
     }
 
     /// Acceleration structure encoder (not supported in WebGPU)
+    ///
+    /// # Panics
+    /// Always panics. Check `Context::capabilities().ray_query` before using ray tracing.
     pub fn acceleration_structure(&mut self, _label: &str) -> TransferCommandEncoder<'_> {
-        panic!("Acceleration structures are not supported in WebGPU backend")
+        panic!(
+            "Acceleration structures are not supported in WebGPU. \
+             Check `Context::capabilities().ray_query` before using ray tracing features."
+        )
     }
 }
 

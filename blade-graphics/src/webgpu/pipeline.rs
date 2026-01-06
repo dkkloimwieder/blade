@@ -95,7 +95,10 @@ fn map_binding_type(
             }
         }
         crate::ShaderBinding::AccelerationStructure => {
-            panic!("AccelerationStructure not supported in WebGPU backend")
+            panic!(
+                "AccelerationStructure shader binding is not supported in WebGPU. \
+                 Check `Context::capabilities().ray_query` before using ray tracing features."
+            )
         }
         crate::ShaderBinding::Plain { size } => wgpu::BindingType::Buffer {
             ty: wgpu::BufferBindingType::Uniform,
@@ -194,7 +197,10 @@ fn map_blend_factor(factor: crate::BlendFactor) -> wgpu::BlendFactor {
         | crate::BlendFactor::OneMinusSrc1
         | crate::BlendFactor::Src1Alpha
         | crate::BlendFactor::OneMinusSrc1Alpha => {
-            panic!("Dual-source blending (Src1 variants) not supported in WebGPU")
+            panic!(
+                "Dual-source blending (Src1 variants) is not supported in WebGPU. \
+                 Check `Context::capabilities().dual_source_blending` before using these blend factors."
+            )
         }
     }
 }

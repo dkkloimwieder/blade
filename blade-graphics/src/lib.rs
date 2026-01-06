@@ -128,6 +128,30 @@ impl From<PlatformError> for NotSupportedError {
     }
 }
 
+/// Error returned when attempting to use a feature not supported by the current backend.
+///
+/// Applications should check `Context::capabilities()` before using optional features
+/// like ray tracing or dual-source blending.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnsupportedFeatureError {
+    /// Name of the unsupported feature
+    pub feature: &'static str,
+    /// Hint for checking capability before use
+    pub capability_hint: &'static str,
+}
+
+impl std::fmt::Display for UnsupportedFeatureError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} is not supported. Check `{}` in Context::capabilities() before use.",
+            self.feature, self.capability_hint
+        )
+    }
+}
+
+impl std::error::Error for UnsupportedFeatureError {}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Capabilities {
     /// Which shader stages support ray queries
