@@ -103,6 +103,25 @@ struct Example {
 }
 
 impl Example {
+    fn make_surface_config(size: winit::dpi::PhysicalSize<u32>) -> gpu::SurfaceConfig {
+        log::info!("Window size: {:?}", size);
+        gpu::SurfaceConfig {
+            size: gpu::Extent {
+                width: size.width,
+                height: size.height,
+                depth: 1,
+            },
+            usage: gpu::TextureUsage::TARGET,
+            #[cfg(all(target_arch = "wasm32", blade_wgpu))]
+            display_sync: gpu::DisplaySync::Block,
+            #[cfg(not(all(target_arch = "wasm32", blade_wgpu)))]
+            display_sync: gpu::DisplaySync::Recent,
+            ..Default::default()
+        }
+    }
+
+    /// Sync initialization for native and GLES WASM
+    #[cfg(not(all(target_arch = "wasm32", blade_wgpu)))]
     fn new(window: &winit::window::Window) -> Self {
         let context = unsafe {
             gpu::Context::init(gpu::ContextDesc {
@@ -113,31 +132,46 @@ impl Example {
             })
             .expect("Failed to create GPU context")
         };
+        Self::init_with_context(context, window)
+    }
 
-        let mut surface = context
-            .create_surface(window)
+    /// Async initialization for WebGPU WASM
+    #[cfg(all(target_arch = "wasm32", blade_wgpu))]
+    async fn new_async(window: &winit::window::Window) -> Self {
+        let context = gpu::Context::init_async(gpu::ContextDesc {
+            presentation: true,
+            validation: cfg!(debug_assertions),
+            timing: false,
+            capture: false,
+            overlay: false,
+            device_id: 0,
+        })
+        .await
+        .expect("Failed to create GPU context");
+        Self::init_with_context(context, window)
+    }
+
+    fn init_with_context(context: gpu::Context, window: &winit::window::Window) -> Self {
+        println!("{:?}", context.device_information());
+        let window_size = window.inner_size();
+
+        let surface = context
+            .create_surface_configured(window, Self::make_surface_config(window_size))
             .expect("Failed to create surface");
-
-        let size = window.inner_size();
-        context.reconfigure_surface(
-            &mut surface,
-            gpu::SurfaceConfig {
-                size: gpu::Extent {
-                    width: size.width,
-                    height: size.height,
-                    depth: 1,
-                },
-                display_sync: gpu::DisplaySync::Block,
-                ..Default::default()
-            },
-        );
 
         let surface_info = surface.info();
         let surface_format = surface_info.format;
 
         // Load shaders
+        #[cfg(target_arch = "wasm32")]
+        let cull_source = include_str!("cull.wgsl");
+        #[cfg(not(target_arch = "wasm32"))]
         let cull_source = std::fs::read_to_string("examples/frustum-cull/cull.wgsl")
             .expect("Failed to load cull.wgsl");
+
+        #[cfg(target_arch = "wasm32")]
+        let render_source = include_str!("render.wgsl");
+        #[cfg(not(target_arch = "wasm32"))]
         let render_source = std::fs::read_to_string("examples/frustum-cull/render.wgsl")
             .expect("Failed to load render.wgsl");
 
@@ -262,7 +296,7 @@ impl Example {
             buffer_count: 2,
         });
 
-        println!(
+        log::info!(
             "GPU Frustum Culling: {} cubes ({}x{}x{})",
             object_count, GRID_SIZE, GRID_SIZE, GRID_SIZE
         );
@@ -281,7 +315,7 @@ impl Example {
             prev_sync_point: None,
             object_count,
             camera_angle: 0.0,
-            window_size: size,
+            window_size,
         }
     }
 
@@ -296,18 +330,7 @@ impl Example {
 
     fn resize(&mut self, size: winit::dpi::PhysicalSize<u32>) {
         self.window_size = size;
-        self.context.reconfigure_surface(
-            &mut self.surface,
-            gpu::SurfaceConfig {
-                size: gpu::Extent {
-                    width: size.width,
-                    height: size.height,
-                    depth: 1,
-                },
-                display_sync: gpu::DisplaySync::Block,
-                ..Default::default()
-            },
-        );
+        self.context.reconfigure_surface(&mut self.surface, Self::make_surface_config(size));
     }
 
     fn render(&mut self) {
@@ -486,10 +509,13 @@ impl Example {
 }
 
 //=============================================================================
-// Main Entry Point
+// Main Entry Points
 //=============================================================================
 
+/// Main for native and GLES WASM (sync init)
+#[cfg(not(all(target_arch = "wasm32", blade_wgpu)))]
 fn main() {
+    #[cfg(not(target_arch = "wasm32"))]
     env_logger::init();
 
     let event_loop = winit::event_loop::EventLoop::new().unwrap();
@@ -497,17 +523,63 @@ fn main() {
         .with_title("GPU Frustum Culling");
     let window = event_loop.create_window(window_attributes).unwrap();
 
+    #[cfg(target_arch = "wasm32")]
+    {
+        use winit::platform::web::WindowExtWebSys as _;
+        console_error_panic_hook::set_once();
+        console_log::init().expect("could not initialize logger");
+        let canvas = window.canvas().unwrap();
+        canvas.set_id(gpu::CANVAS_ID);
+        web_sys::window()
+            .and_then(|win| win.document())
+            .and_then(|doc| doc.body())
+            .and_then(|body| body.append_child(&web_sys::Element::from(canvas)).ok())
+            .expect("couldn't append canvas to document body");
+    }
+
     let mut example = Example::new(&window);
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut last_snapshot = std::time::Instant::now();
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut frame_count = 0u32;
 
     #[allow(deprecated)]
     event_loop
         .run(|event, target| {
+            target.set_control_flow(winit::event_loop::ControlFlow::Poll);
             use winit::event::{Event, WindowEvent};
             match event {
                 Event::WindowEvent { event, .. } => match event {
                     WindowEvent::CloseRequested => target.exit(),
                     WindowEvent::Resized(size) => example.resize(size),
-                    WindowEvent::RedrawRequested => example.render(),
+                    WindowEvent::RedrawRequested => {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            frame_count += 1;
+                            if frame_count == 100 {
+                                let accum_time = last_snapshot.elapsed().as_secs_f32();
+                                println!(
+                                    "Avg frame time {}ms",
+                                    accum_time * 1000.0 / frame_count as f32
+                                );
+                                last_snapshot = std::time::Instant::now();
+                                frame_count = 0;
+                            }
+                        }
+                        example.render();
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    WindowEvent::KeyboardInput {
+                        event: winit::event::KeyEvent {
+                            physical_key: winit::keyboard::PhysicalKey::Code(
+                                winit::keyboard::KeyCode::Escape,
+                            ),
+                            state: winit::event::ElementState::Pressed,
+                            ..
+                        },
+                        ..
+                    } => target.exit(),
                     _ => {}
                 },
                 Event::AboutToWait => window.request_redraw(),
@@ -517,4 +589,102 @@ fn main() {
         .unwrap();
 
     example.deinit();
+}
+
+/// Main for WebGPU WASM (async init)
+#[cfg(all(target_arch = "wasm32", blade_wgpu))]
+fn main() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use winit::platform::web::WindowExtWebSys as _;
+
+    console_error_panic_hook::set_once();
+    console_log::init().expect("could not initialize logger");
+
+    let event_loop = winit::event_loop::EventLoop::new().unwrap();
+    let window_attributes = winit::window::Window::default_attributes()
+        .with_title("GPU Frustum Culling");
+    let window = Rc::new(event_loop.create_window(window_attributes).unwrap());
+
+    // Set up canvas
+    let canvas = window.canvas().unwrap();
+    canvas.set_id(gpu::CANVAS_ID);
+    web_sys::window()
+        .and_then(|win| win.document())
+        .and_then(|doc| doc.body())
+        .and_then(|body| body.append_child(&web_sys::Element::from(canvas)).ok())
+        .expect("couldn't append canvas to document body");
+
+    // State machine: None = initializing, Some = ready
+    let example: Rc<RefCell<Option<Example>>> = Rc::new(RefCell::new(None));
+    let init_started: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+    let frame_count: Rc<RefCell<u32>> = Rc::new(RefCell::new(0));
+
+    // Performance timing
+    let perf = web_sys::window().unwrap().performance().unwrap();
+    let last_time: Rc<RefCell<f64>> = Rc::new(RefCell::new(perf.now()));
+    let perf = Rc::new(perf);
+
+    let example_clone = example.clone();
+    let init_started_clone = init_started.clone();
+    let window_clone = window.clone();
+
+    event_loop
+        .run(move |event, target| {
+            target.set_control_flow(winit::event_loop::ControlFlow::Wait);
+            match event {
+                winit::event::Event::AboutToWait => {
+                    // Start async init on first frame
+                    if !*init_started_clone.borrow() {
+                        *init_started_clone.borrow_mut() = true;
+                        let example_init = example_clone.clone();
+                        let window_init = window_clone.clone();
+                        wasm_bindgen_futures::spawn_local(async move {
+                            let ex = Example::new_async(&window_init).await;
+                            *example_init.borrow_mut() = Some(ex);
+                            log::info!("WebGPU frustum-cull initialized");
+                        });
+                    }
+                    window.request_redraw();
+                }
+                winit::event::Event::WindowEvent { event, .. } => match event {
+                    winit::event::WindowEvent::Resized(size) => {
+                        if let Some(ref mut ex) = *example.borrow_mut() {
+                            ex.resize(size);
+                        }
+                    }
+                    winit::event::WindowEvent::CloseRequested => {
+                        target.exit();
+                    }
+                    winit::event::WindowEvent::RedrawRequested => {
+                        if let Some(ref mut ex) = *example.borrow_mut() {
+                            let count = {
+                                let mut fc = frame_count.borrow_mut();
+                                *fc += 1;
+                                *fc
+                            };
+
+                            ex.render();
+
+                            // Log performance every 100 frames
+                            if count % 100 == 0 {
+                                let now = perf.now();
+                                let elapsed = now - *last_time.borrow();
+                                let avg_frame_ms = elapsed / 100.0;
+                                let fps = 1000.0 / avg_frame_ms;
+
+                                log::info!(
+                                    "Frame {}: avg {:.2}ms ({:.1} FPS), {} cubes",
+                                    count, avg_frame_ms, fps, ex.object_count
+                                );
+                                *last_time.borrow_mut() = now;
+                            }
+                        }
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        })
+        .unwrap();
 }

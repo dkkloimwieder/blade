@@ -37,6 +37,9 @@ fn main() {
     let context = unsafe { gpu::Context::init(gpu::ContextDesc::default()).unwrap() };
 
     let global_layout = <Globals as gpu::ShaderData>::layout();
+    #[cfg(target_arch = "wasm32")]
+    let shader_source = include_str!("shader.wgsl");
+    #[cfg(not(target_arch = "wasm32"))]
     let shader_source = std::fs::read_to_string("examples/mini/shader.wgsl").unwrap();
     let shader = context.create_shader(gpu::ShaderDesc {
         source: &shader_source,

@@ -72,6 +72,9 @@ struct DrawData {
 
 impl System {
     pub fn new(context: &gpu::Context, desc: SystemDesc, sample_count: u32) -> Self {
+        #[cfg(target_arch = "wasm32")]
+        let source = include_str!("particle.wgsl");
+        #[cfg(not(target_arch = "wasm32"))]
         let source = std::fs::read_to_string("examples/particle/particle.wgsl").unwrap();
         let shader = context.create_shader(gpu::ShaderDesc { source: &source });
         let particle_size = shader.get_struct_size("Particle");

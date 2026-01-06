@@ -17,6 +17,7 @@ struct Example {
     msaa_texture: Option<gpu::Texture>,
     msaa_view: Option<gpu::TextureView>,
 
+    #[cfg(not(target_arch = "wasm32"))]
     export_image: bool,
 }
 
@@ -37,15 +38,20 @@ impl Example {
         if let Some(msaa_texture) = self.msaa_texture.take() {
             self.context.destroy_texture(msaa_texture);
         }
-        self.recreate_msaa_texutres_if_needed((size.width, size.height), surface_info.format);
+        self.recreate_msaa_textures_if_needed((size.width, size.height), surface_info.format);
     }
 
-    fn recreate_msaa_texutres_if_needed(
+    fn recreate_msaa_textures_if_needed(
         &mut self,
         (width, height): (u32, u32),
         format: gpu::TextureFormat,
     ) {
-        if (self.sample_count > 1 || self.export_image) && self.msaa_texture.is_none() {
+        #[cfg(not(target_arch = "wasm32"))]
+        let needs_texture = (self.sample_count > 1 || self.export_image) && self.msaa_texture.is_none();
+        #[cfg(target_arch = "wasm32")]
+        let needs_texture = self.sample_count > 1 && self.msaa_texture.is_none();
+
+        if needs_texture {
             let msaa_texture = self.context.create_texture(gpu::TextureDesc {
                 name: "msaa texture",
                 format,
@@ -61,6 +67,7 @@ impl Example {
                     | gpu::TextureUsage::COPY,
                 array_layer_count: 1,
                 mip_level_count: 1,
+                #[cfg(not(target_arch = "wasm32"))]
                 external: if self.export_image {
                     #[cfg(target_os = "windows")]
                     {
@@ -73,9 +80,11 @@ impl Example {
                 } else {
                     None
                 },
+                #[cfg(target_arch = "wasm32")]
+                external: None,
             });
 
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(all(not(target_os = "macos"), not(target_arch = "wasm32")))]
             if self.export_image {
                 println!(
                     "msaa_texture_fd: {:?}",
@@ -107,24 +116,49 @@ impl Example {
                 depth: 1,
             },
             usage: gpu::TextureUsage::TARGET,
+            #[cfg(all(target_arch = "wasm32", blade_wgpu))]
             display_sync: gpu::DisplaySync::Block,
+            #[cfg(not(all(target_arch = "wasm32", blade_wgpu)))]
+            display_sync: gpu::DisplaySync::Recent,
             ..Default::default()
         }
     }
 
+    /// Sync initialization for native and GLES WASM
+    #[cfg(not(all(target_arch = "wasm32", blade_wgpu)))]
     fn new(window: &winit::window::Window) -> Self {
-        let window_size = window.inner_size();
         let context = unsafe {
             gpu::Context::init(gpu::ContextDesc {
                 presentation: true,
                 validation: cfg!(debug_assertions),
                 timing: true,
                 capture: false,
-
                 ..Default::default()
             })
             .unwrap()
         };
+        Self::init_with_context(context, window)
+    }
+
+    /// Async initialization for WebGPU WASM
+    #[cfg(all(target_arch = "wasm32", blade_wgpu))]
+    async fn new_async(window: &winit::window::Window) -> Self {
+        let context = gpu::Context::init_async(gpu::ContextDesc {
+            presentation: true,
+            validation: cfg!(debug_assertions),
+            timing: false,
+            capture: false,
+            overlay: false,
+            device_id: 0,
+        })
+        .await
+        .unwrap();
+        Self::init_with_context(context, window)
+    }
+
+    fn init_with_context(context: gpu::Context, window: &winit::window::Window) -> Self {
+        let window_size = window.inner_size();
+
         let surface = context
             .create_surface_configured(window, Self::make_surface_config(window_size))
             .unwrap();
@@ -165,6 +199,7 @@ impl Example {
             sample_count,
             msaa_texture: None,
             msaa_view: None,
+            #[cfg(not(target_arch = "wasm32"))]
             export_image: false,
         }
     }
@@ -193,7 +228,7 @@ impl Example {
         gui_textures: &egui::TexturesDelta,
         screen_desc: &blade_egui::ScreenDescriptor,
     ) {
-        self.recreate_msaa_texutres_if_needed(
+        self.recreate_msaa_textures_if_needed(
             screen_desc.physical_size,
             self.surface.info().format,
         );
@@ -210,7 +245,12 @@ impl Example {
             .update_textures(&mut self.command_encoder, gui_textures, &self.context);
         self.particle_system.update(&mut self.command_encoder);
 
-        if self.sample_count <= 1 && !self.export_image {
+        #[cfg(not(target_arch = "wasm32"))]
+        let use_msaa = self.sample_count > 1 || self.export_image;
+        #[cfg(target_arch = "wasm32")]
+        let use_msaa = self.sample_count > 1;
+
+        if !use_msaa {
             if let mut pass = self.command_encoder.render(
                 "draw particles and ui",
                 gpu::RenderTargetSet {
@@ -228,17 +268,22 @@ impl Example {
                     .paint(&mut pass, gui_primitives, screen_desc, &self.context);
             }
         } else {
+            #[cfg(not(target_arch = "wasm32"))]
+            let finish_op = if self.export_image {
+                gpu::FinishOp::Store
+            } else {
+                gpu::FinishOp::ResolveTo(frame_view)
+            };
+            #[cfg(target_arch = "wasm32")]
+            let finish_op = gpu::FinishOp::ResolveTo(frame_view);
+
             if let mut pass = self.command_encoder.render(
                 "draw particles with msaa resolve",
                 gpu::RenderTargetSet {
                     colors: &[gpu::RenderTarget {
                         view: self.msaa_view.unwrap(),
                         init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
-                        finish_op: if self.export_image {
-                            gpu::FinishOp::Store
-                        } else {
-                            gpu::FinishOp::ResolveTo(frame_view)
-                        },
+                        finish_op,
                     }],
                     depth_stencil: None,
                 },
@@ -322,19 +367,25 @@ impl Example {
                 }
             });
 
-        ui.add_space(5.0);
-        ui.heading("Timings");
-        for (name, time) in self.command_encoder.timings() {
-            let millis = time.as_secs_f32() * 1000.0;
-            ui.horizontal(|ui| {
-                ui.label(name);
-                ui.colored_label(egui::Color32::WHITE, format!("{:.2} ms", millis));
-            });
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            ui.add_space(5.0);
+            ui.heading("Timings");
+            for (name, time) in self.command_encoder.timings() {
+                let millis = time.as_secs_f32() * 1000.0;
+                ui.horizontal(|ui| {
+                    ui.label(name);
+                    ui.colored_label(egui::Color32::WHITE, format!("{:.2} ms", millis));
+                });
+            }
         }
     }
 }
 
+/// Main for native and GLES WASM (sync init)
+#[cfg(not(all(target_arch = "wasm32", blade_wgpu)))]
 fn main() {
+    #[cfg(not(target_arch = "wasm32"))]
     env_logger::init();
 
     let event_loop = winit::event_loop::EventLoop::new().unwrap();
@@ -343,12 +394,27 @@ fn main() {
 
     let window = event_loop.create_window(window_attributes).unwrap();
 
+    #[cfg(target_arch = "wasm32")]
+    {
+        use winit::platform::web::WindowExtWebSys as _;
+        console_error_panic_hook::set_once();
+        console_log::init().expect("could not initialize logger");
+        let canvas = window.canvas().unwrap();
+        canvas.set_id(gpu::CANVAS_ID);
+        web_sys::window()
+            .and_then(|win| win.document())
+            .and_then(|doc| doc.body())
+            .and_then(|body| body.append_child(&web_sys::Element::from(canvas)).ok())
+            .expect("couldn't append canvas to document body");
+    }
+
     let egui_ctx = egui::Context::default();
     let viewport_id = egui_ctx.viewport_id();
     let mut egui_winit = egui_winit::State::new(egui_ctx, viewport_id, &window, None, None, None);
 
     let mut example = Example::new(&window);
 
+    #[allow(deprecated)]
     event_loop
         .run(|event, target| {
             target.set_control_flow(winit::event_loop::ControlFlow::Poll);
@@ -367,6 +433,7 @@ fn main() {
                     }
 
                     match event {
+                        #[cfg(not(target_arch = "wasm32"))]
                         winit::event::WindowEvent::KeyboardInput {
                             event:
                                 winit::event::KeyEvent {
@@ -404,8 +471,22 @@ fn main() {
                             });
 
                             egui_winit.handle_platform_output(&window, egui_output.platform_output);
-                            let repaint_delay =
-                                egui_output.viewport_output[&viewport_id].repaint_delay;
+
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                let repaint_delay =
+                                    egui_output.viewport_output[&viewport_id].repaint_delay;
+                                let control_flow = if let Some(repaint_after_instant) =
+                                    std::time::Instant::now().checked_add(repaint_delay)
+                                {
+                                    winit::event_loop::ControlFlow::WaitUntil(
+                                        repaint_after_instant.into(),
+                                    )
+                                } else {
+                                    winit::event_loop::ControlFlow::Wait
+                                };
+                                target.set_control_flow(control_flow);
+                            }
 
                             let pixels_per_point =
                                 egui_winit::pixels_per_point(egui_winit.egui_ctx(), &window);
@@ -413,18 +494,6 @@ fn main() {
                                 .egui_ctx()
                                 .tessellate(egui_output.shapes, pixels_per_point);
 
-                            let control_flow = if let Some(repaint_after_instant) =
-                                std::time::Instant::now().checked_add(repaint_delay)
-                            {
-                                winit::event_loop::ControlFlow::WaitUntil(
-                                    repaint_after_instant.into(),
-                                )
-                            } else {
-                                winit::event_loop::ControlFlow::Wait
-                            };
-                            target.set_control_flow(control_flow);
-
-                            //Note: this will probably look different with proper support for resizing
                             let window_size = window.inner_size();
                             let screen_desc = blade_egui::ScreenDescriptor {
                                 physical_size: (window_size.width, window_size.height),
@@ -442,4 +511,137 @@ fn main() {
         .unwrap();
 
     example.destroy();
+}
+
+/// Main for WebGPU WASM (async init)
+#[cfg(all(target_arch = "wasm32", blade_wgpu))]
+fn main() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use winit::platform::web::WindowExtWebSys as _;
+
+    console_error_panic_hook::set_once();
+    console_log::init().expect("could not initialize logger");
+
+    let event_loop = winit::event_loop::EventLoop::new().unwrap();
+    let window_attributes =
+        winit::window::Window::default_attributes().with_title("blade-particle");
+    let window = Rc::new(event_loop.create_window(window_attributes).unwrap());
+
+    // Set up canvas
+    let canvas = window.canvas().unwrap();
+    canvas.set_id(gpu::CANVAS_ID);
+    web_sys::window()
+        .and_then(|win| win.document())
+        .and_then(|doc| doc.body())
+        .and_then(|body| body.append_child(&web_sys::Element::from(canvas)).ok())
+        .expect("couldn't append canvas to document body");
+
+    // State machine: None = initializing, Some = ready
+    let example: Rc<RefCell<Option<Example>>> = Rc::new(RefCell::new(None));
+    let init_started: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+
+    // egui state
+    let egui_ctx = egui::Context::default();
+    let viewport_id = egui_ctx.viewport_id();
+    let egui_winit: Rc<RefCell<Option<egui_winit::State>>> = Rc::new(RefCell::new(None));
+
+    let example_clone = example.clone();
+    let init_started_clone = init_started.clone();
+    let window_clone = window.clone();
+    let egui_ctx_clone = egui_ctx.clone();
+    let egui_winit_clone = egui_winit.clone();
+
+    event_loop
+        .run(move |event, target| {
+            target.set_control_flow(winit::event_loop::ControlFlow::Wait);
+            match event {
+                winit::event::Event::AboutToWait => {
+                    // Start async init on first frame
+                    if !*init_started_clone.borrow() {
+                        *init_started_clone.borrow_mut() = true;
+                        let example_init = example_clone.clone();
+                        let window_init = window_clone.clone();
+                        let egui_ctx_init = egui_ctx_clone.clone();
+                        let egui_winit_init = egui_winit_clone.clone();
+                        wasm_bindgen_futures::spawn_local(async move {
+                            let ex = Example::new_async(&window_init).await;
+                            *example_init.borrow_mut() = Some(ex);
+                            *egui_winit_init.borrow_mut() = Some(egui_winit::State::new(
+                                egui_ctx_init,
+                                viewport_id,
+                                &*window_init,
+                                None,
+                                None,
+                                None,
+                            ));
+                            log::info!("WebGPU particle system initialized");
+                        });
+                    }
+                    window.request_redraw();
+                }
+                winit::event::Event::WindowEvent { event, .. } => {
+                    // Handle egui input
+                    if let Some(ref mut ew) = *egui_winit.borrow_mut() {
+                        let response = ew.on_window_event(&window, &event);
+                        if response.consumed {
+                            return;
+                        }
+                        if response.repaint {
+                            window.request_redraw();
+                        }
+                    }
+
+                    match event {
+                        winit::event::WindowEvent::Resized(size) => {
+                            if let Some(ref mut ex) = *example.borrow_mut() {
+                                ex.resize(size);
+                            }
+                        }
+                        winit::event::WindowEvent::CloseRequested => {
+                            target.exit();
+                        }
+                        winit::event::WindowEvent::RedrawRequested => {
+                            let mut example_ref = example.borrow_mut();
+                            let mut egui_winit_ref = egui_winit.borrow_mut();
+
+                            if let (Some(ref mut ex), Some(ref mut ew)) =
+                                (&mut *example_ref, &mut *egui_winit_ref)
+                            {
+                                let raw_input = ew.take_egui_input(&window);
+                                let egui_output = ew.egui_ctx().run(raw_input, |egui_ctx| {
+                                    egui::SidePanel::left("info").show(egui_ctx, |ui| {
+                                        ui.add_space(5.0);
+                                        ex.add_gui(ui);
+                                    });
+                                });
+
+                                ew.handle_platform_output(&window, egui_output.platform_output);
+
+                                let pixels_per_point =
+                                    egui_winit::pixels_per_point(ew.egui_ctx(), &window);
+                                let primitives = ew
+                                    .egui_ctx()
+                                    .tessellate(egui_output.shapes, pixels_per_point);
+
+                                let window_size = window.inner_size();
+                                let screen_desc = blade_egui::ScreenDescriptor {
+                                    physical_size: (window_size.width, window_size.height),
+                                    scale_factor: pixels_per_point,
+                                };
+
+                                ex.render(
+                                    &primitives,
+                                    &egui_output.textures_delta,
+                                    &screen_desc,
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        })
+        .unwrap();
 }
