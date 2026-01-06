@@ -15,6 +15,9 @@ fn parse_wgsl() {
         .read_dir()
         .unwrap();
 
+    // Examples that require Vulkan-only features (ray tracing)
+    const VULKAN_ONLY_EXAMPLES: &[&str] = &["ray-query", "scene", "vehicle"];
+
     for sub_entry in read_dir {
         let example = match sub_entry {
             Ok(entry) => entry.path(),
@@ -23,6 +26,13 @@ fn parse_wgsl() {
                 continue;
             }
         };
+        // Skip Vulkan-only examples
+        if let Some(name) = example.file_name().and_then(|n| n.to_str()) {
+            if VULKAN_ONLY_EXAMPLES.contains(&name) {
+                println!("Skipping Vulkan-only example: {:?}", example);
+                continue;
+            }
+        }
         let dir = match example.read_dir() {
             Ok(dir) => dir,
             Err(_) => continue,
