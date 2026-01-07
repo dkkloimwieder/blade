@@ -21,3 +21,7 @@ bench-trace/**/*.json
 bench-trace/**/*.html
 # But keep analysis reports
 !bench-trace/**/*.md
+
+# Chrome profile (keep README, ignore Chrome data)
+.chrome-profile/*
+!.chrome-profile/README.md

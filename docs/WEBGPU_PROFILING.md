@@ -601,14 +601,16 @@ google-chrome \
   --enable-features=Vulkan,VulkanFromANGLE \
   --use-angle=vulkan \
   --enable-dawn-features=allow_unsafe_apis \
-  --user-data-dir=/tmp/chrome-webgpu-profile \
+  --user-data-dir=$(pwd)/.chrome-profile \
   http://localhost:8000
 ```
 
 **Key flags:**
-- `--user-data-dir=/tmp/...` - Isolated profile (won't affect your main Chrome)
+- `--user-data-dir=.chrome-profile` - Repo-local profile (persists extensions, doesn't affect main Chrome)
 - Extensions enabled by default (no `--disable-extensions`)
 - Vulkan backend for best performance on Linux
+
+**Note:** The `.chrome-profile/` directory in the repo root is the canonical Chrome profile for this project. Install WebGPU Inspector there once and it persists.
 
 ### 11.5 Capture with WebGPU Inspector
 
