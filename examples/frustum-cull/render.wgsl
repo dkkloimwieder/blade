@@ -52,7 +52,7 @@ fn vs_main(
     @builtin(vertex_index) vertex_idx: u32,
     @builtin(instance_index) instance_idx: u32,
 ) -> VertexOutput {
-    // Look up which object this instance refers to
+    // Look up which object this instance refers to (from compacted visible list)
     let obj_idx = visible_indices[instance_idx];
     let obj = objects[obj_idx];
 

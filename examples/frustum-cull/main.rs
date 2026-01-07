@@ -12,7 +12,6 @@ use bytemuck::{Pod, Zeroable};
 
 const GRID_SIZE: u32 = 20; // 20x20x20 = 8000 cubes
 const CUBE_SPACING: f32 = 3.0;
-const WORKGROUP_SIZE: u32 = 256;
 
 //=============================================================================
 // Shader Data Structures
@@ -72,6 +71,10 @@ struct CullData {
     bounds: gpu::BufferPiece,
     indirect: gpu::BufferPiece,
     visible_indices: gpu::BufferPiece,
+    visibility: gpu::BufferPiece,
+    local_prefix: gpu::BufferPiece,
+    workgroup_totals: gpu::BufferPiece,
+    workgroup_offsets: gpu::BufferPiece,
 }
 
 #[derive(blade_macros::ShaderData)]
@@ -88,18 +91,28 @@ struct RenderData {
 struct Example {
     context: gpu::Context,
     surface: gpu::Surface,
-    reset_pipeline: gpu::ComputePipeline,
-    cull_pipeline: gpu::ComputePipeline,
+    // Compute pipelines for 3-pass prefix sum culling
+    cull_pipeline: gpu::ComputePipeline,      // Pass 1: visibility + local prefix sum
+    scan_pipeline: gpu::ComputePipeline,      // Pass 2: prefix sum of workgroup totals
+    scatter_pipeline: gpu::ComputePipeline,   // Pass 3: scatter visible objects
     render_pipeline: gpu::RenderPipeline,
+    // Object data
     bounds_buf: gpu::Buffer,
     objects_buf: gpu::Buffer,
+    // Indirect draw buffer
     indirect_buf: gpu::Buffer,
+    // Prefix sum intermediate buffers
     visible_indices_buf: gpu::Buffer,
+    visibility_buf: gpu::Buffer,
+    local_prefix_buf: gpu::Buffer,
+    workgroup_totals_buf: gpu::Buffer,
+    workgroup_offsets_buf: gpu::Buffer,
     command_encoder: gpu::CommandEncoder,
     prev_sync_point: Option<gpu::SyncPoint>,
     object_count: u32,
     camera_angle: f32,
     window_size: winit::dpi::PhysicalSize<u32>,
+    frame_index: usize,
 }
 
 impl Example {
@@ -182,16 +195,22 @@ impl Example {
         let cull_layout = CullData::layout();
         let render_layout = RenderData::layout();
 
-        let reset_pipeline = context.create_compute_pipeline(gpu::ComputePipelineDesc {
-            name: "reset",
-            data_layouts: &[&cull_layout],
-            compute: cull_shader.at("cs_reset"),
-        });
-
         let cull_pipeline = context.create_compute_pipeline(gpu::ComputePipelineDesc {
             name: "cull",
             data_layouts: &[&cull_layout],
             compute: cull_shader.at("cs_cull"),
+        });
+
+        let scan_pipeline = context.create_compute_pipeline(gpu::ComputePipelineDesc {
+            name: "scan_workgroups",
+            data_layouts: &[&cull_layout],
+            compute: cull_shader.at("cs_scan_workgroups"),
+        });
+
+        let scatter_pipeline = context.create_compute_pipeline(gpu::ComputePipelineDesc {
+            name: "scatter",
+            data_layouts: &[&cull_layout],
+            compute: cull_shader.at("cs_scatter"),
         });
 
         let render_pipeline = context.create_render_pipeline(gpu::RenderPipelineDesc {
@@ -229,15 +248,44 @@ impl Example {
             memory: gpu::Memory::Shared,
         });
 
+        // Indirect draw buffer
         let indirect_buf = context.create_buffer(gpu::BufferDesc {
             name: "indirect",
             size: std::mem::size_of::<DrawIndirect>() as u64,
             memory: gpu::Memory::Shared,
         });
 
+        // Visible indices output buffer
         let visible_indices_buf = context.create_buffer(gpu::BufferDesc {
             name: "visible_indices",
             size: (object_count as usize * std::mem::size_of::<u32>()) as u64,
+            memory: gpu::Memory::Device,
+        });
+
+        // Prefix sum intermediate buffers
+        let num_workgroups = (object_count + 255) / 256;
+
+        let visibility_buf = context.create_buffer(gpu::BufferDesc {
+            name: "visibility",
+            size: (object_count as usize * std::mem::size_of::<u32>()) as u64,
+            memory: gpu::Memory::Device,
+        });
+
+        let local_prefix_buf = context.create_buffer(gpu::BufferDesc {
+            name: "local_prefix",
+            size: (object_count as usize * std::mem::size_of::<u32>()) as u64,
+            memory: gpu::Memory::Device,
+        });
+
+        let workgroup_totals_buf = context.create_buffer(gpu::BufferDesc {
+            name: "workgroup_totals",
+            size: (num_workgroups as usize * std::mem::size_of::<u32>()) as u64,
+            memory: gpu::Memory::Device,
+        });
+
+        let workgroup_offsets_buf = context.create_buffer(gpu::BufferDesc {
+            name: "workgroup_offsets",
+            size: (num_workgroups as usize * std::mem::size_of::<u32>()) as u64,
             memory: gpu::Memory::Device,
         });
 
@@ -286,10 +334,10 @@ impl Example {
                 first_instance: 0,
             };
         }
+        context.sync_buffer(indirect_buf);
 
         context.sync_buffer(bounds_buf);
         context.sync_buffer(objects_buf);
-        context.sync_buffer(indirect_buf);
 
         let command_encoder = context.create_command_encoder(gpu::CommandEncoderDesc {
             name: "main",
@@ -304,15 +352,21 @@ impl Example {
         Self {
             context,
             surface,
-            reset_pipeline,
             cull_pipeline,
+            scan_pipeline,
+            scatter_pipeline,
             render_pipeline,
             bounds_buf,
             objects_buf,
             indirect_buf,
             visible_indices_buf,
+            visibility_buf,
+            local_prefix_buf,
+            workgroup_totals_buf,
+            workgroup_offsets_buf,
             command_encoder,
             prev_sync_point: None,
+            frame_index: 0,
             object_count,
             camera_angle: 0.0,
             window_size,
@@ -340,6 +394,7 @@ impl Example {
 
         let dt = 1.0 / 60.0;
         self.camera_angle += dt * 0.3;
+        self.frame_index = self.frame_index.wrapping_add(1);
 
         let (globals, frustum) = self.compute_camera();
 
@@ -355,6 +410,10 @@ impl Example {
             bounds: self.bounds_buf.into(),
             indirect: self.indirect_buf.into(),
             visible_indices: self.visible_indices_buf.into(),
+            visibility: self.visibility_buf.into(),
+            local_prefix: self.local_prefix_buf.into(),
+            workgroup_totals: self.workgroup_totals_buf.into(),
+            workgroup_offsets: self.workgroup_offsets_buf.into(),
         };
 
         let render_data = RenderData {
@@ -366,24 +425,33 @@ impl Example {
         self.command_encoder.start();
         self.command_encoder.init_texture(frame.texture());
 
-        // Reset indirect buffer
-        if let mut pass = self.command_encoder.compute("reset") {
-            if let mut pc = pass.with(&self.reset_pipeline) {
+        let workgroups = (self.object_count + 255) / 256;
+
+        // Pass 1: Compute visibility and local prefix sums
+        if let mut pass = self.command_encoder.compute("cull") {
+            if let mut pc = pass.with(&self.cull_pipeline) {
+                pc.bind(0, &cull_data);
+                pc.dispatch([workgroups, 1, 1]);
+            }
+        }
+
+        // Pass 2: Prefix sum of workgroup totals (also sets indirect.instance_count)
+        if let mut pass = self.command_encoder.compute("scan") {
+            if let mut pc = pass.with(&self.scan_pipeline) {
                 pc.bind(0, &cull_data);
                 pc.dispatch([1, 1, 1]);
             }
         }
 
-        // Run frustum culling
-        if let mut pass = self.command_encoder.compute("cull") {
-            if let mut pc = pass.with(&self.cull_pipeline) {
+        // Pass 3: Scatter visible objects to compacted output
+        if let mut pass = self.command_encoder.compute("scatter") {
+            if let mut pc = pass.with(&self.scatter_pipeline) {
                 pc.bind(0, &cull_data);
-                let workgroups = (self.object_count + WORKGROUP_SIZE - 1) / WORKGROUP_SIZE;
                 pc.dispatch([workgroups, 1, 1]);
             }
         }
 
-        // Render visible objects
+        // Render visible objects using indirect draw
         if let mut pass = self.command_encoder.render(
             "draw",
             gpu::RenderTargetSet {
@@ -500,8 +568,13 @@ impl Example {
         self.context.destroy_buffer(self.objects_buf);
         self.context.destroy_buffer(self.indirect_buf);
         self.context.destroy_buffer(self.visible_indices_buf);
-        self.context.destroy_compute_pipeline(&mut self.reset_pipeline);
+        self.context.destroy_buffer(self.visibility_buf);
+        self.context.destroy_buffer(self.local_prefix_buf);
+        self.context.destroy_buffer(self.workgroup_totals_buf);
+        self.context.destroy_buffer(self.workgroup_offsets_buf);
         self.context.destroy_compute_pipeline(&mut self.cull_pipeline);
+        self.context.destroy_compute_pipeline(&mut self.scan_pipeline);
+        self.context.destroy_compute_pipeline(&mut self.scatter_pipeline);
         self.context.destroy_render_pipeline(&mut self.render_pipeline);
         self.context.destroy_command_encoder(&mut self.command_encoder);
         self.context.destroy_surface(&mut self.surface);
