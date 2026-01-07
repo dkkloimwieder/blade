@@ -147,8 +147,56 @@ If Firefox crashed mid-trace, the file may be truncated:
 
 ```bash
 # Add closing bracket if missing
-echo "]" >> /tmp/wgpu-trace/trace.ron
+echo "]" >> ~/wgpu-trace/0/trace.ron
 ```
+
+### 3.6 Analyzing trace.ron
+
+The trace file is RON (Rusty Object Notation) format containing every wgpu API call:
+
+```ron
+[
+    CreateBuffer(Id(0,1,Empty), BufferDescriptor { label: Some("vertex"), size: 65536, usage: VERTEX | COPY_DST, ... }),
+    CreateShaderModule(Id(0,1,Empty), ShaderModuleDescriptor { label: None, source: File("data0.wgsl"), ... }),
+    CreateRenderPipeline(Id(0,1,Empty), RenderPipelineDescriptor { ... }),
+    Submit(1, [
+        RunRenderPass { base: BasePass { commands: [...] }, target_colors: [...] }
+    ]),
+    ...
+]
+```
+
+**Key things to look for:**
+
+| Pattern | What It Means |
+|---------|---------------|
+| Many `CreateBuffer` calls per frame | Resource churn - consider caching |
+| Large `WriteBuffer` calls | Data uploads - minimize per-frame |
+| Multiple `Submit` calls per frame | Consider batching commands |
+| Complex `RenderPipeline` descriptors | Shader complexity analysis |
+
+**Quick analysis commands:**
+
+```bash
+# Count API calls by type
+grep -oE "^    [A-Za-z]+" ~/wgpu-trace/0/trace.ron | sort | uniq -c | sort -rn
+
+# Find all buffer creations
+grep "CreateBuffer" ~/wgpu-trace/0/trace.ron | head -20
+
+# Count submits (frames)
+grep -c "Submit" ~/wgpu-trace/0/trace.ron
+
+# Find render pass configurations
+grep -A5 "RunRenderPass" ~/wgpu-trace/0/trace.ron | head -50
+```
+
+**Shader analysis:**
+
+Shaders are saved as `data*.wgsl` files. Review for:
+- Unused uniforms
+- Complex math that could be simplified
+- Loop unrolling opportunities
 
 ---
 
@@ -254,7 +302,30 @@ Or in `chrome://flags`:
 - GPU process communication
 - Frame timing from browser perspective
 
-### 6.3 Chrome DevTools Performance
+### 6.3 Chrome WebGPU Developer Features
+
+Enable at `chrome://flags/#enable-webgpu-developer-features` for advanced profiling.
+
+**Features unlocked:**
+
+| Feature | Description |
+|---------|-------------|
+| **High-precision timestamps** | Nanosecond GPU timing (removes 100μs quantization) |
+| **Extended GPUAdapterInfo** | `backend`, `type`, `driver`, `vkDriverVersion`, `memoryHeaps` |
+| **strictMath shaders** | Precise math without NaN/Infinity optimizations |
+| **Zero-copy video info** | Check if video textures use direct GPU access |
+
+**Get adapter details:**
+```javascript
+const adapter = await navigator.gpu.requestAdapter();
+console.log(adapter.info.backend);      // "vulkan", "d3d12", etc.
+console.log(adapter.info.type);         // "discrete GPU", "integrated GPU"
+console.log(adapter.info.memoryHeaps);  // Memory heap sizes
+```
+
+**Warning:** Development only - exposes privacy-sensitive info.
+
+### 6.4 Chrome DevTools Performance
 
 1. Open DevTools (F12)
 2. Go to **Performance** tab
@@ -264,16 +335,63 @@ Or in `chrome://flags`:
 
 ---
 
-## 7. Application Code Changes
+## 7. WGPU Trace Analysis with RenderDoc
 
-### 7.1 No Code Changes Needed
+### 7.1 Build the wgpu Player
+
+```bash
+git clone https://github.com/gfx-rs/wgpu
+cd wgpu/player
+
+# For RenderDoc capture (recommended):
+cargo build --release
+
+# For visual replay with window:
+cargo build --release --features winit
+```
+
+### 7.2 Replay in RenderDoc
+
+1. **Open RenderDoc**
+2. **Launch Application** tab:
+   - Executable: `wgpu/target/release/player`
+   - Arguments: `~/wgpu-trace/0`
+   - Working Directory: `wgpu/player`
+3. Click **Launch**
+4. Press **F12** to capture a frame
+5. Double-click the capture thumbnail to analyze
+
+**Important:** Build WITHOUT `winit` feature for RenderDoc - it adds frame markers automatically.
+
+### 7.3 Wayland Workaround
+
+RenderDoc may fail on Wayland. Force X11:
+
+```bash
+export WAYLAND_DISPLAY=""
+export WINIT_UNIX_BACKEND=x11
+```
+
+### 7.4 What RenderDoc Shows
+
+- Draw call list with timing
+- Shader source and disassembly
+- Buffer/texture contents at each draw
+- Pipeline state (blend, depth, rasterizer)
+- GPU counters (vendor-specific)
+
+---
+
+## 8. Application Code Changes
+
+### 8.1 No Code Changes Needed
 
 All profiling methods work without modifying your blade/wgpu code:
 - WebGPU Inspector hooks the API
 - WGPU_TRACE is runtime env var
 - Firefox Profiler is external
 
-### 7.2 Optional: Add Debug Labels
+### 8.2 Optional: Add Debug Labels
 
 For better trace readability, use descriptive pass labels:
 
@@ -285,7 +403,7 @@ encoder.compute("particle-update")
 
 These labels appear in WebGPU Inspector and WGPU traces.
 
-### 7.3 Future: Timestamp Queries
+### 8.3 Future: Timestamp Queries
 
 When `blade-9rv` is implemented, you'll be able to get per-pass GPU timing from within the app. Until then, use external tools.
 
@@ -352,7 +470,7 @@ sudo apt update && sudo apt upgrade mesa-vulkan-drivers
 
 ---
 
-## 10. Summary: Firefox First
+## 10. Summary: Recommended Tools
 
 | What You Want | Tool | Setup |
 |---------------|------|-------|
