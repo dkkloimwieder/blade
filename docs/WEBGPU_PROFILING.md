@@ -555,7 +555,43 @@ for _ in 0..11 {  // ~10,000 bunnies (exponential growth)
 
 Each `increase()` call adds `64 + current_count/2` bunnies.
 
-### 11.3 Launch Chrome for Profiling
+### 11.3 Automated Chrome Profiling (RECOMMENDED)
+
+**Use the chrome-devtools-cli perf.mjs script with `--gpu` flag:**
+
+```bash
+cd ~/.claude/skills/chrome-devtools-cli
+node scripts/perf.mjs http://localhost:8000 --gpu --duration 5000
+```
+
+**CRITICAL:** The `--gpu` flag is REQUIRED for WebGPU profiling. It automatically enables:
+- `--enable-unsafe-webgpu`
+- `--enable-features=Vulkan,VulkanFromANGLE`
+- `--use-angle=vulkan`
+- `--enable-dawn-features=allow_unsafe_apis`
+
+Without `--gpu`, Chrome won't have WebGPU enabled and profiling will fail.
+
+**Options:**
+- `--duration <ms>` - Profile duration (default: 5000)
+- `--iterations <n>` - Run benchmark N times with statistics
+- `--click "<selector>"` - Click element before profiling
+- `--output <file>` - Save JSON results
+
+**Examples:**
+
+```bash
+# Profile for 10 seconds
+node scripts/perf.mjs http://localhost:8000 --gpu --duration 10000
+
+# Run 5 iterations for benchmarking
+node scripts/perf.mjs http://localhost:8000 --gpu --iterations 5
+
+# Save results to file
+node scripts/perf.mjs http://localhost:8000 --gpu --output /tmp/bunnymark-perf.json
+```
+
+### 11.4 Manual Chrome Launch (Alternative)
 
 **With extensions enabled** (for WebGPU Inspector):
 
@@ -574,7 +610,7 @@ google-chrome \
 - Extensions enabled by default (no `--disable-extensions`)
 - Vulkan backend for best performance on Linux
 
-### 11.4 Capture with WebGPU Inspector
+### 11.5 Capture with WebGPU Inspector
 
 1. Install WebGPU Inspector from Chrome Web Store
 2. Navigate to `http://localhost:8000`
@@ -582,7 +618,7 @@ google-chrome \
 4. Find **WebGPU Inspector** tab (click `>>` if hidden)
 5. Click **Capture** for single frame, or **Record** for multi-frame HTML export
 
-### 11.5 Export Recording
+### 11.6 Export Recording
 
 1. Click **Record** (not Capture)
 2. Let the demo run for a few seconds
@@ -591,7 +627,7 @@ google-chrome \
 
 The HTML file is self-contained and can be opened in any browser to replay the captured frames.
 
-### 11.6 Launch Firefox for Profiling
+### 11.7 Launch Firefox for Profiling
 
 ```bash
 # Standard launch (WebGPU must be enabled in about:config)
