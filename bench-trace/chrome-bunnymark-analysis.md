@@ -155,3 +155,55 @@ For comprehensive analysis, combine:
 - **Chrome DevTools**: CPU/JS profiling (this trace)
 - **Perfetto gpu.dawn**: Dawn internals
 - **WebGPU Inspector**: Frame capture and GPU commands
+
+---
+
+## How to Capture Chrome Performance Traces
+
+### 1. Start the Demo
+
+```bash
+cd /path/to/blade
+RUSTFLAGS="--cfg blade_wgpu" cargo run-wasm --example bunnymark
+# Server at http://localhost:8000
+```
+
+### 2. Launch Chrome with WebGPU
+
+```bash
+google-chrome \
+  --enable-unsafe-webgpu \
+  --enable-features=Vulkan,VulkanFromANGLE \
+  --use-angle=vulkan \
+  --enable-dawn-features=allow_unsafe_apis \
+  --user-data-dir=/tmp/chrome-webgpu-profile \
+  http://localhost:8000
+```
+
+### 3. Capture via DevTools
+
+1. Open DevTools (F12)
+2. Go to **Performance** tab
+3. Click record
+4. Let demo run for 5-10 seconds
+5. Stop recording
+6. Analyze flame graph and call tree
+
+### 4. Alternative: WebGPU Inspector
+
+For GPU command capture (more detailed than Performance tab):
+
+1. Install from https://chromewebstore.google.com/detail/webgpu-inspector/holcbbnljhkpkjkhgkagjkhhpeochfal
+2. Open DevTools (F12)
+3. Find **WebGPU Inspector** tab
+4. Click **Record** for multi-frame HTML export
+
+### 5. Automated Profiling (CLI)
+
+```bash
+# Using chrome-devtools-cli
+node ~/.claude/skills/chrome-devtools-cli/scripts/perf.mjs \
+  --url http://localhost:8000 \
+  --duration 10000 \
+  --gpu
+```

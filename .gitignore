@@ -18,5 +18,6 @@ bench-trace/**/*.bin
 bench-trace/**/*.ron
 bench-trace/**/*.wgsl
 bench-trace/**/*.json
+bench-trace/**/*.html
 # But keep analysis reports
 !bench-trace/**/*.md

@@ -522,6 +522,108 @@ sudo apt update && sudo apt upgrade mesa-vulkan-drivers
 
 ---
 
+## 11. Running Blade Bunnymark (WASM Demo)
+
+### 11.1 Build and Serve
+
+```bash
+# Build with WebGPU backend (required for WASM)
+RUSTFLAGS="--cfg blade_wgpu" cargo run-wasm --example bunnymark
+
+# Server starts at http://localhost:8000
+```
+
+**Important:** The `blade_wgpu` flag is required. Without it, the GLES backend is used which lacks required features.
+
+### 11.2 Modify Bunny Count
+
+Edit `examples/bunnymark/main.rs` line ~695:
+
+```rust
+// Pre-populate with bunnies
+for _ in 0..11 {  // ~10,000 bunnies (exponential growth)
+    ex.increase();
+}
+```
+
+| Iterations | Approximate Bunnies |
+|------------|---------------------|
+| 6 | ~1,300 |
+| 9 | ~5,000 |
+| 11 | ~11,000 |
+| 13 | ~25,000 |
+
+Each `increase()` call adds `64 + current_count/2` bunnies.
+
+### 11.3 Launch Chrome for Profiling
+
+**With extensions enabled** (for WebGPU Inspector):
+
+```bash
+google-chrome \
+  --enable-unsafe-webgpu \
+  --enable-features=Vulkan,VulkanFromANGLE \
+  --use-angle=vulkan \
+  --enable-dawn-features=allow_unsafe_apis \
+  --user-data-dir=/tmp/chrome-webgpu-profile \
+  http://localhost:8000
+```
+
+**Key flags:**
+- `--user-data-dir=/tmp/...` - Isolated profile (won't affect your main Chrome)
+- Extensions enabled by default (no `--disable-extensions`)
+- Vulkan backend for best performance on Linux
+
+### 11.4 Capture with WebGPU Inspector
+
+1. Install WebGPU Inspector from Chrome Web Store
+2. Navigate to `http://localhost:8000`
+3. Open DevTools (F12)
+4. Find **WebGPU Inspector** tab (click `>>` if hidden)
+5. Click **Capture** for single frame, or **Record** for multi-frame HTML export
+
+### 11.5 Export Recording
+
+1. Click **Record** (not Capture)
+2. Let the demo run for a few seconds
+3. Click **Stop**
+4. Save the generated HTML file
+
+The HTML file is self-contained and can be opened in any browser to replay the captured frames.
+
+### 11.6 Launch Firefox for Profiling
+
+```bash
+# Standard launch (WebGPU must be enabled in about:config)
+firefox http://localhost:8000
+
+# With WGPU API tracing
+MOZ_DISABLE_GPU_SANDBOX=1 WGPU_TRACE=~/wgpu-trace \
+  firefox --profile ~/firefox-wgputrace-profile --no-remote \
+  http://localhost:8000
+```
+
+---
+
+## 12. Blade Bunnymark Analysis
+
+See `bench-trace/webgpu-inspector-analysis.md` for detailed analysis of captured frames.
+
+**Key findings from captures (1K to 11K bunnies):**
+
+| Metric | Scales With Instance Count? |
+|--------|---------------------------|
+| Draw calls | No (always 1) |
+| Compute dispatches | No (always 1) |
+| Workgroups | Yes (linear) |
+| Pipeline binds | No (always 2) |
+| setBindGroup | No (always 4) |
+| File size | No (~4.7 MB) |
+
+The demo demonstrates efficient instanced rendering - 8× more instances requires only changes to dispatch/draw parameters, not command structure.
+
+---
+
 ## References
 
 - [wgpu Debugging Wiki](https://github.com/gfx-rs/wgpu/wiki/Debugging-wgpu-Applications)

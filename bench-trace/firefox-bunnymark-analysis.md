@@ -161,3 +161,57 @@ The bunnymark trace shows a **well-optimized rendering pattern**:
 4. No unnecessary resource recreation
 
 The main limitation is that WGPU_TRACE doesn't capture full render/compute pass details in Firefox. For comprehensive frame analysis, use WebGPU Inspector extension or replay through RenderDoc.
+
+---
+
+## How to Capture Firefox WGPU Traces
+
+### 1. One-Time Setup
+
+Create a dedicated Firefox profile:
+
+```bash
+mkdir -p ~/firefox-wgputrace-profile
+firefox -ProfileManager --no-remote
+# Create profile named "wgputrace" pointing to above directory
+# Launch profile, enable dom.webgpu.enabled in about:config
+```
+
+### 2. Start the Demo
+
+```bash
+cd /path/to/blade
+RUSTFLAGS="--cfg blade_wgpu" cargo run-wasm --example bunnymark
+# Server at http://localhost:8000
+```
+
+### 3. Capture Trace
+
+```bash
+mkdir -p ~/wgpu-trace
+
+MOZ_DISABLE_GPU_SANDBOX=1 WGPU_TRACE=~/wgpu-trace \
+  firefox --profile ~/firefox-wgputrace-profile --no-remote \
+  http://localhost:8000
+```
+
+Let the demo run, then close Firefox. Trace is in `~/wgpu-trace/0/`.
+
+### 4. Analyze
+
+```bash
+# Count frames
+grep -c "Submit" ~/wgpu-trace/0/trace.ron
+
+# Count API calls by type
+grep -oE "^    [A-Za-z]+" ~/wgpu-trace/0/trace.ron | sort | uniq -c | sort -rn
+```
+
+### Alternative: WebGPU Inspector
+
+For interactive frame capture without WGPU_TRACE:
+
+1. Install from https://addons.mozilla.org/firefox/addon/webgpu-inspector/
+2. Open DevTools (F12)
+3. Find WebGPU Inspector tab
+4. Click **Record** for multi-frame capture
