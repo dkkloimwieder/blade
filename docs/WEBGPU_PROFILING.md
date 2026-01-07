@@ -39,41 +39,64 @@ media.gpu-process-decoder = true
 
 ---
 
-## 2. WebGPU Inspector (Recommended)
+## 2. WebGPU Profiling Extensions
+
+### 2.1 WebGPU Inspector (Recommended)
 
 **Best for**: Frame-by-frame debugging, shader inspection, buffer/texture data
 
-### 2.1 Installation
+**Installation:**
+- **Firefox**: [Firefox Add-Ons Store](https://addons.mozilla.org/firefox/addon/webgpu-inspector/)
+- **Chrome**: [Chrome Web Store](https://chromewebstore.google.com/detail/webgpu-inspector/holcbbnljhkpkjkhgkagjkhhpeochfal)
+- **Source**: [GitHub](https://github.com/brendan-duncan/webgpu_inspector)
 
-**Firefox**: [Firefox Add-Ons Store](https://addons.mozilla.org/firefox/addon/webgpu-inspector/)
-
-**Chrome**: [Chrome Web Store](https://chromewebstore.google.com/detail/webgpu-inspector/holcbbnljhkpkjkhgkagjkhhpeochfal)
-
-### 2.2 Features
-
-| Feature | How to Use |
-|---------|------------|
+| Feature | Description |
+|---------|-------------|
 | **Inspect** | Live view of all GPU objects (buffers, textures, pipelines) |
 | **Capture** | Records one frame: all commands, render pass outputs, buffer data |
-| **Record** | Generates standalone HTML replay file |
+| **Record** | Generates standalone HTML replay file for sharing/bug reports |
 | **Shader Edit** | Modify shaders live, see results immediately |
-| **Frame Timing** | Plot frame times over multiple frames |
+| **Frame Timing** | Plot frame times and memory allocation over multiple frames |
+| **Pixel Inspector** | Click on textures to see exact pixel values |
 
-### 2.3 Usage
-
+**Usage:**
 1. Open DevTools (F12)
-2. Find "WebGPU" tab (may need to click ">>" to find it)
+2. Find "WebGPU Inspector" tab (may need to click ">>" to find it)
 3. Click **Inspect** to see live GPU objects
 4. Click **Capture** to record a single frame
 5. Expand commands to see bound resources, state, outputs
 
-### 2.4 What You Get
+**Troubleshooting:**
+- Close and reopen DevTools if tab is missing
+- Refresh page if tools don't activate
+- Ensure page has focus when using Capture
+
+### 2.2 WebGPU DevTools
+
+**Chrome**: [Chrome Web Store](https://chromewebstore.google.com/detail/webgpu-devtools/ckabpgjkjmbkfmichbbgcgbelkbbpopi)
+
+Alternative extension with similar capabilities. Useful if WebGPU Inspector has issues.
+
+### 2.3 WebGPUVision (Advanced)
+
+**Source**: [GitHub](https://github.com/WonderInteractive/WebGPUVision)
+
+A more advanced tool with unique features:
+- **Live remote debugging** across networks
+- **AI-assisted call graph optimization** (experimental)
+- **Multi-frame recording** with compression
+- **Real-time shader editing**
+
+Currently Windows-only, Linux/macOS support planned. Pre-release software.
+
+### 2.4 What Extensions Show
 
 - Every GPU command in order
 - Render pass output images (what was drawn)
 - Buffer contents at each draw call
 - Texture data with pixel inspection
 - Pipeline state (blend, depth, etc.)
+- Memory allocation tracking
 
 ---
 
@@ -272,15 +295,26 @@ More complex - requires building wgpu player and using its trace replay.
 
 ### 6.1 Required Flags for Linux
 
-**Command line** (most reliable):
+**Command line** (most reliable for performance):
 
 ```bash
 google-chrome \
   --enable-unsafe-webgpu \
   --enable-features=Vulkan,VulkanFromANGLE \
   --use-angle=vulkan \
-  --ozone-platform=x11
+  --enable-dawn-features=allow_unsafe_apis
 ```
+
+**Key flags explained:**
+
+| Flag | Purpose |
+|------|---------|
+| `--enable-unsafe-webgpu` | Enable WebGPU API |
+| `--enable-features=Vulkan,VulkanFromANGLE` | Use Vulkan backend (faster than OpenGL) |
+| `--use-angle=vulkan` | Force ANGLE to use Vulkan |
+| `--enable-dawn-features=allow_unsafe_apis` | Enable timestamp queries |
+
+**Performance note**: The Vulkan flags significantly improve performance on Linux. Without them, Chrome may fall back to OpenGL which is slower.
 
 Or in `chrome://flags`:
 - `#enable-unsafe-webgpu` → Enabled
