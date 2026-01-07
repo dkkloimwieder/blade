@@ -13,4 +13,10 @@ libGLESv2.dylib
 .DS_Store
 /.vs
 /.vscode
-bench-trace/
+# Trace data (large binary files)
+bench-trace/**/*.bin
+bench-trace/**/*.ron
+bench-trace/**/*.wgsl
+bench-trace/**/*.json
+# But keep analysis reports
+!bench-trace/**/*.md
