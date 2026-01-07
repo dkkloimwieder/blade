@@ -77,33 +77,56 @@ media.gpu-process-decoder = true
 
 ---
 
-## 3. WGPU API Tracing (Firefox Only)
+## 3. WGPU API Tracing (Firefox)
 
 **Best for**: Low-level debugging, reproducing bugs, comparing to native
 
-### 3.1 Capture Trace
+### 3.1 Setup (One-Time)
+
+Create a dedicated Firefox profile with WebGPU enabled:
 
 ```bash
-# Create trace directory
-mkdir -p /tmp/wgpu-trace
+# Create profile directory
+mkdir -p ~/firefox-wgputrace-profile
 
-# Run Firefox with tracing enabled
-MOZ_DISABLE_GPU_SANDBOX=1 WGPU_TRACE=/tmp/wgpu-trace firefox-nightly
+# Launch Firefox profile manager
+firefox -ProfileManager --no-remote
+```
+
+1. Click **Create Profile**
+2. Name it (e.g., `wgputrace`)
+3. Set directory to `~/firefox-wgputrace-profile`
+4. Finish and launch that profile
+5. Go to `about:config`, set `dom.webgpu.enabled` = `true`
+6. Close Firefox
+
+### 3.2 Capture Trace
+
+```bash
+# Create trace output directory
+mkdir -p ~/wgpu-trace
+
+# Launch Firefox with tracing (use YOUR profile path)
+MOZ_DISABLE_GPU_SANDBOX=1 WGPU_TRACE=~/wgpu-trace firefox --profile ~/firefox-wgputrace-profile --no-remote http://localhost:8000
 ```
 
 Navigate to your WebGPU page. The trace records automatically.
 
-### 3.2 Trace Contents
+**Important**:
+- Trace directory must be in home dir (not /tmp) - GPU process sandbox restrictions
+- WebGPU must be enabled in that profile
+- Works with Firefox stable (tested on 146), not just Nightly
+
+### 3.3 Trace Contents
 
 ```
-/tmp/wgpu-trace/
-├── trace.ron           # API call sequence
-├── buffer_*.bin        # Buffer data snapshots
-├── texture_*.bin       # Texture data snapshots
-└── shader_*.wgsl       # Shader source
+~/wgpu-trace/0/
+├── trace.ron           # API call sequence (can be 100K+ lines)
+├── data*.bin           # Buffer data snapshots
+└── data*.wgsl          # Shader source
 ```
 
-### 3.3 Replay Trace
+### 3.4 Replay Trace
 
 Clone wgpu and build the player:
 
@@ -118,7 +141,7 @@ cargo run -- /tmp/wgpu-trace
 cargo run --features winit -- /tmp/wgpu-trace
 ```
 
-### 3.4 If Trace Is Incomplete
+### 3.5 If Trace Is Incomplete
 
 If Firefox crashed mid-trace, the file may be truncated:
 
