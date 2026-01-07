@@ -296,7 +296,7 @@ impl Context {
     ) -> CompiledShader {
         let ep_index = sf.entry_point_index();
 
-        let (mut module, module_info) = sf.shader.resolve_constants(&sf.constants);
+        let (mut module, module_info) = sf.shader.resolve_constants(sf.constants);
         let wg_size = module.entry_points[ep_index].workgroup_size;
 
         // Collect entry point stages before mutable borrow

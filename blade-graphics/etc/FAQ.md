@@ -2,7 +2,7 @@
 
 ## When should I *not* use Blade?
 
-- When you *target the Web*. Blade currently has no Web backends supported. Targeting WebGPU is desired, but will not be as performant as native.
+- When you need features not yet in the *WebGPU backend* (such as ray tracing). The WebGPU backend supports rendering and compute; ray tracing requires Vulkan.
 - Similarly, when you target the *low-end GPUs* or old drivers. Blade has no OpenGL/D3D11 support, and it requires fresh drivers on Vulkan.
 - When you render with 10K or *more draw calls*. State switching has overhead with Blade, and it is lower in GPU abstractions/libraries that have barriers and explicit bind groups.
 - When you need something *off the shelf*. Blade is experimental and young, it assumes you'll be customizing it.

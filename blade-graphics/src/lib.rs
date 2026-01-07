@@ -647,6 +647,7 @@ pub struct AccelerationStructureSizes {
 pub struct Shader {
     module: naga::Module,
     info: naga::valid::ModuleInfo,
+    #[allow(dead_code)] // Kept for debugging/error messages
     source: String,
 }
 
@@ -958,9 +959,10 @@ pub enum BlendFactor {
 }
 
 impl BlendFactor {
+    #[allow(dead_code)] // Reserved for dual-source blending support
     const fn uses_dual_source(&self) -> bool {
         matches!(
-            self,
+            *self,
             BlendFactor::Src1
                 | BlendFactor::OneMinusSrc1
                 | BlendFactor::Src1Alpha
@@ -1019,6 +1021,7 @@ impl BlendComponent {
         operation: BlendOperation::Add,
     };
 
+    #[allow(dead_code)] // Reserved for dual-source blending support
     const fn uses_dual_source(&self) -> bool {
         self.src_factor.uses_dual_source() || self.dst_factor.uses_dual_source()
     }
@@ -1069,6 +1072,7 @@ impl BlendState {
         alpha: BlendComponent::ADDITIVE,
     };
 
+    #[allow(dead_code)] // Reserved for dual-source blending support
     const fn uses_dual_source(&self) -> bool {
         self.color.uses_dual_source() || self.alpha.uses_dual_source()
     }

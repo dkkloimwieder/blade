@@ -300,11 +300,11 @@ pub(super) enum BindGroupEntry {
 
 impl BindGroupEntry {
     fn binding_index(&self) -> u32 {
-        match self {
-            BindGroupEntry::Buffer { binding, .. } => *binding,
-            BindGroupEntry::Texture { binding, .. } => *binding,
-            BindGroupEntry::Sampler { binding, .. } => *binding,
-            BindGroupEntry::PlainData { binding, .. } => *binding,
+        match *self {
+            BindGroupEntry::Buffer { binding, .. } => binding,
+            BindGroupEntry::Texture { binding, .. } => binding,
+            BindGroupEntry::Sampler { binding, .. } => binding,
+            BindGroupEntry::PlainData { binding, .. } => binding,
         }
     }
 }
@@ -408,8 +408,8 @@ impl CommandEncoder {
             .colors
             .iter()
             .map(|ct| {
-                let resolve_target = match &ct.finish_op {
-                    crate::FinishOp::ResolveTo(view) => Some(view.raw),
+                let resolve_target = match ct.finish_op {
+                    crate::FinishOp::ResolveTo(ref view) => Some(view.raw),
                     _ => None,
                 };
                 RenderColorAttachment {
@@ -824,7 +824,7 @@ impl crate::traits::CommandDevice for Context {
 
 /// Map InitOp to wgpu LoadOp
 fn map_load_op(op: &crate::InitOp) -> wgpu::LoadOp<wgpu::Color> {
-    match op {
+    match *op {
         crate::InitOp::Load => wgpu::LoadOp::Load,
         crate::InitOp::Clear(color) => {
             let (r, g, b, a) = match color {
@@ -840,7 +840,7 @@ fn map_load_op(op: &crate::InitOp) -> wgpu::LoadOp<wgpu::Color> {
 
 /// Map InitOp to depth LoadOp (f32 clear value)
 fn map_depth_load_op(op: &crate::InitOp) -> wgpu::LoadOp<f32> {
-    match op {
+    match *op {
         crate::InitOp::Load => wgpu::LoadOp::Load,
         crate::InitOp::Clear(_) => wgpu::LoadOp::Clear(1.0), // Depth typically cleared to 1.0
         crate::InitOp::DontCare => wgpu::LoadOp::Clear(1.0),
@@ -849,7 +849,7 @@ fn map_depth_load_op(op: &crate::InitOp) -> wgpu::LoadOp<f32> {
 
 /// Map InitOp to stencil LoadOp (u32 clear value)
 fn map_stencil_load_op(op: &crate::InitOp) -> wgpu::LoadOp<u32> {
-    match op {
+    match *op {
         crate::InitOp::Load => wgpu::LoadOp::Load,
         crate::InitOp::Clear(_) => wgpu::LoadOp::Clear(0),
         crate::InitOp::DontCare => wgpu::LoadOp::Clear(0),
@@ -858,7 +858,7 @@ fn map_stencil_load_op(op: &crate::InitOp) -> wgpu::LoadOp<u32> {
 
 /// Map FinishOp to wgpu StoreOp
 fn map_store_op(op: &crate::FinishOp) -> wgpu::StoreOp {
-    match op {
+    match *op {
         crate::FinishOp::Store => wgpu::StoreOp::Store,
         crate::FinishOp::Discard => wgpu::StoreOp::Discard,
         crate::FinishOp::ResolveTo(_) => wgpu::StoreOp::Store, // Resolve handled separately
@@ -914,18 +914,18 @@ impl<'a> ExecutionState<'a> {
 
     /// Convert BindGroupEntry to ResourceBinding for cache key (non-dynamic path)
     fn entry_to_binding(entry: &BindGroupEntry) -> ResourceBinding {
-        match entry {
+        match *entry {
             BindGroupEntry::Buffer { binding, buffer_key, offset, size } => {
-                ResourceBinding::Buffer { binding: *binding, key: *buffer_key, offset: *offset, size: *size }
+                ResourceBinding::Buffer { binding, key: buffer_key, offset, size }
             }
             BindGroupEntry::Texture { binding, view_key } => {
-                ResourceBinding::TextureView { binding: *binding, key: *view_key }
+                ResourceBinding::TextureView { binding, key: view_key }
             }
             BindGroupEntry::Sampler { binding, sampler_key } => {
-                ResourceBinding::Sampler { binding: *binding, key: *sampler_key }
+                ResourceBinding::Sampler { binding, key: sampler_key }
             }
             BindGroupEntry::PlainData { binding, offset, size } => {
-                ResourceBinding::PlainData { binding: *binding, offset: *offset, size: *size }
+                ResourceBinding::PlainData { binding, offset, size }
             }
         }
     }
@@ -933,23 +933,23 @@ impl<'a> ExecutionState<'a> {
     /// Convert BindGroupEntry to ResourceBinding for cache key (dynamic offset path)
     /// PlainData entries become PlainDataDynamic with buffer_index, excluding the offset
     fn entry_to_binding_dynamic(&self, entry: &BindGroupEntry) -> ResourceBinding {
-        match entry {
+        match *entry {
             BindGroupEntry::Buffer { binding, buffer_key, offset, size } => {
-                ResourceBinding::Buffer { binding: *binding, key: *buffer_key, offset: *offset, size: *size }
+                ResourceBinding::Buffer { binding, key: buffer_key, offset, size }
             }
             BindGroupEntry::Texture { binding, view_key } => {
-                ResourceBinding::TextureView { binding: *binding, key: *view_key }
+                ResourceBinding::TextureView { binding, key: view_key }
             }
             BindGroupEntry::Sampler { binding, sampler_key } => {
-                ResourceBinding::Sampler { binding: *binding, key: *sampler_key }
+                ResourceBinding::Sampler { binding, key: sampler_key }
             }
             BindGroupEntry::PlainData { binding, size, .. } => {
                 // For dynamic offsets, use PlainDataDynamic which doesn't include offset
                 // The offset is passed separately to set_bind_group
                 ResourceBinding::PlainDataDynamic {
-                    binding: *binding,
+                    binding,
                     buffer_index: self.uniform_buffer_index,
-                    size: *size,
+                    size,
                 }
             }
         }
@@ -1162,40 +1162,40 @@ fn make_bind_group_entry<'a>(
     hub: &'a Hub,
     plain_data_buffer: Option<&'a wgpu::Buffer>,
 ) -> Option<wgpu::BindGroupEntry<'a>> {
-    match entry {
+    match *entry {
         BindGroupEntry::Buffer { binding, buffer_key, offset, size } => {
-            let buffer_entry = hub.buffers.get(*buffer_key)?;
+            let buffer_entry = hub.buffers.get(buffer_key)?;
             Some(wgpu::BindGroupEntry {
-                binding: *binding,
+                binding,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                     buffer: &buffer_entry.gpu,
-                    offset: *offset,
-                    size: std::num::NonZeroU64::new(*size),
+                    offset,
+                    size: std::num::NonZeroU64::new(size),
                 }),
             })
         }
         BindGroupEntry::Texture { binding, view_key } => {
-            let view = hub.texture_views.get(*view_key)?;
+            let view = hub.texture_views.get(view_key)?;
             Some(wgpu::BindGroupEntry {
-                binding: *binding,
+                binding,
                 resource: wgpu::BindingResource::TextureView(view),
             })
         }
         BindGroupEntry::Sampler { binding, sampler_key } => {
-            let sampler = hub.samplers.get(*sampler_key)?;
+            let sampler = hub.samplers.get(sampler_key)?;
             Some(wgpu::BindGroupEntry {
-                binding: *binding,
+                binding,
                 resource: wgpu::BindingResource::Sampler(sampler),
             })
         }
         BindGroupEntry::PlainData { binding, offset, size } => {
             let buffer = plain_data_buffer?;
             Some(wgpu::BindGroupEntry {
-                binding: *binding,
+                binding,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                     buffer,
-                    offset: *offset as u64,
-                    size: std::num::NonZeroU64::new(*size as u64),
+                    offset: offset as u64,
+                    size: std::num::NonZeroU64::new(size as u64),
                 }),
             })
         }
@@ -1209,29 +1209,29 @@ fn make_bind_group_entry_dynamic<'a>(
     hub: &'a Hub,
     plain_data_buffer: Option<&'a wgpu::Buffer>,
 ) -> Option<wgpu::BindGroupEntry<'a>> {
-    match entry {
+    match *entry {
         BindGroupEntry::Buffer { binding, buffer_key, offset, size } => {
-            let buffer_entry = hub.buffers.get(*buffer_key)?;
+            let buffer_entry = hub.buffers.get(buffer_key)?;
             Some(wgpu::BindGroupEntry {
-                binding: *binding,
+                binding,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                     buffer: &buffer_entry.gpu,
-                    offset: *offset,
-                    size: std::num::NonZeroU64::new(*size),
+                    offset,
+                    size: std::num::NonZeroU64::new(size),
                 }),
             })
         }
         BindGroupEntry::Texture { binding, view_key } => {
-            let view = hub.texture_views.get(*view_key)?;
+            let view = hub.texture_views.get(view_key)?;
             Some(wgpu::BindGroupEntry {
-                binding: *binding,
+                binding,
                 resource: wgpu::BindingResource::TextureView(view),
             })
         }
         BindGroupEntry::Sampler { binding, sampler_key } => {
-            let sampler = hub.samplers.get(*sampler_key)?;
+            let sampler = hub.samplers.get(sampler_key)?;
             Some(wgpu::BindGroupEntry {
-                binding: *binding,
+                binding,
                 resource: wgpu::BindingResource::Sampler(sampler),
             })
         }
@@ -1239,11 +1239,11 @@ fn make_bind_group_entry_dynamic<'a>(
             // For dynamic offsets: use offset=0, the actual offset is passed to set_bind_group
             let buffer = plain_data_buffer?;
             Some(wgpu::BindGroupEntry {
-                binding: *binding,
+                binding,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                     buffer,
                     offset: 0,
-                    size: std::num::NonZeroU64::new(*size as u64),
+                    size: std::num::NonZeroU64::new(size as u64),
                 }),
             })
         }
@@ -1254,8 +1254,8 @@ fn make_bind_group_entry_dynamic<'a>(
 fn collect_dynamic_offsets(entries: &[&BindGroupEntry]) -> Vec<u32> {
     entries.iter()
         .filter_map(|entry| {
-            match entry {
-                BindGroupEntry::PlainData { offset, .. } => Some(*offset),
+            match **entry {
+                BindGroupEntry::PlainData { offset, .. } => Some(offset),
                 _ => None,
             }
         })
@@ -1264,6 +1264,7 @@ fn collect_dynamic_offsets(entries: &[&BindGroupEntry]) -> Vec<u32> {
 
 impl Context {
     /// Execute recorded commands on a wgpu command encoder
+    #[allow(clippy::pattern_type_mismatch)]
     fn execute_commands(
         &self,
         hub: &Hub,
@@ -1526,6 +1527,7 @@ impl Context {
     }
 
     /// Execute a render pass
+    #[allow(clippy::too_many_arguments, clippy::pattern_type_mismatch)]
     fn execute_render_pass(
         &self,
         hub: &Hub,
@@ -1644,7 +1646,7 @@ impl Context {
                     // Just accumulate entries - bind group created at draw time
                     let group_entries = state.pending_bind_groups
                         .entry(*group_index)
-                        .or_insert_with(Vec::new);
+                        .or_default();
                     group_entries.extend(entries.iter().cloned());
                 }
 
@@ -1714,6 +1716,7 @@ impl Context {
     }
 
     /// Execute a compute pass
+    #[allow(clippy::pattern_type_mismatch)]
     fn execute_compute_pass(
         &self,
         hub: &Hub,
@@ -1745,7 +1748,7 @@ impl Context {
                     // Just accumulate entries - bind group created at dispatch time
                     let group_entries = state.pending_bind_groups
                         .entry(*group_index)
-                        .or_insert_with(Vec::new);
+                        .or_default();
                     group_entries.extend(entries.iter().cloned());
                 }
 

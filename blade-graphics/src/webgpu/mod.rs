@@ -539,22 +539,22 @@ impl DependencyTracker {
     /// Register that a bind group uses these resources
     fn register(&mut self, cache_key: &BindGroupCacheKey) {
         for binding in &cache_key.bindings {
-            match binding {
+            match *binding {
                 ResourceBinding::Buffer { key, .. } => {
                     self.buffer_deps
-                        .entry(*key)
+                        .entry(key)
                         .or_default()
                         .insert(cache_key.clone());
                 }
                 ResourceBinding::TextureView { key, .. } => {
                     self.texture_view_deps
-                        .entry(*key)
+                        .entry(key)
                         .or_default()
                         .insert(cache_key.clone());
                 }
                 ResourceBinding::Sampler { key, .. } => {
                     self.sampler_deps
-                        .entry(*key)
+                        .entry(key)
                         .or_default()
                         .insert(cache_key.clone());
                 }
@@ -779,7 +779,7 @@ impl Context {
     /// WebGPU itself is safe.
     #[cfg(not(target_arch = "wasm32"))]
     pub unsafe fn init(desc: crate::ContextDesc) -> Result<Self, crate::NotSupportedError> {
-        platform::create_context(&desc).map_err(|e| crate::NotSupportedError::Platform(e))
+        platform::create_context(&desc).map_err(crate::NotSupportedError::Platform)
     }
 
     /// Initialize a new WebGPU context asynchronously (WASM).
