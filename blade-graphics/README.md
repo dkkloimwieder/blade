@@ -15,12 +15,29 @@ Blade-graphics is a lean and mean [GPU abstraction](https://youtu.be/63dnzjw4azI
 The backend is selected automatically based on the host platform:
 - *Vulkan* on desktop Linux, Windows, and Android
 - *Metal* on desktop macOS, and iOS
-- *OpenGL ES3* on the Web
+- *OpenGL ES3* on the Web (legacy)
+- *WebGPU* on the Web (recommended) - via `--cfg blade_wgpu`
 
-| Feature | Vulkan | Metal | GLES |
-| ------- | ------ | ----- | ---- |
-| compute | :white_check_mark: | :white_check_mark: | |
-| ray tracing | :white_check_mark: | | |
+| Feature | Vulkan | Metal | GLES | WebGPU |
+| ------- | ------ | ----- | ---- | ------ |
+| compute | :white_check_mark: | :white_check_mark: | | :white_check_mark: |
+| ray tracing | :white_check_mark: | | | |
+
+### WebGPU (Recommended for Web)
+
+The WebGPU backend provides modern GPU access in browsers with compute shader support:
+
+```bash
+RUSTFLAGS="--cfg blade_wgpu" cargo run-wasm --example bunnymark
+```
+
+Features:
+- Full compute shader support (unlike GLES/WebGL2)
+- Indirect draw for GPU-driven rendering
+- Modern binding model with bind group caching
+- Async initialization for WASM
+
+See [docs/WEBGPU.md](../docs/WEBGPU.md) for technical details.
 
 ### Vulkan
 
@@ -38,9 +55,9 @@ Required device extensions:
 Conceptually, Blade requires the baseline Vulkan hardware with a relatively fresh driver.
 All of these required extensions are supported in software by the driver on any underlying architecture.
 
-### OpenGL ES
+### OpenGL ES (Legacy)
 
-GLES is also supported at a basic level. It's enabled for `wasm32-unknown-unknown` target, and can also be force-enabled on native:
+GLES is supported at a basic level but lacks compute shader support. It's enabled for `wasm32-unknown-unknown` target by default, and can also be force-enabled on native:
 ```bash
 RUSTFLAGS="--cfg gles" CARGO_TARGET_DIR=./target-gl cargo run --example bunnymark
 ```
@@ -53,12 +70,14 @@ On Windows, the quotes aren't expected:
 set RUSTFLAGS=--cfg gles
 ```
 
-### WebGL2
+### WebGL2 (Legacy)
 
-Following command will start a web server offering the `bunnymark` example:
+Without the `blade_wgpu` flag, WASM builds use WebGL2 via GLES:
 ```bash
 cargo run-wasm --example bunnymark
 ```
+
+Note: WebGL2 lacks compute shader support. Use WebGPU for compute workloads.
 
 ### Vulkan Portability
 

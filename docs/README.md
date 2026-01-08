@@ -34,5 +34,19 @@ cargo run --release --example bunnymark
 
 ## Platforms
 
-The full-stack Blade Engine can only run on Vulkan with hardware Ray Tracing support.
-However, on secondary platforms, such as Metal and GLES/WebGL2, one can still use Blde-Graphics and Blade-Egui.
+The full-stack Blade Engine requires Vulkan with hardware Ray Tracing support.
+
+For web deployment, blade-graphics supports **WebGPU** with full compute shader support:
+
+```bash
+RUSTFLAGS="--cfg blade_wgpu" cargo run-wasm --example bunnymark
+```
+
+| Platform | blade-graphics | blade-egui | blade-render | blade (engine) |
+|----------|----------------|------------|--------------|----------------|
+| Vulkan (Linux/Windows) | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+| Metal (macOS/iOS) | :white_check_mark: | :white_check_mark: | | |
+| WebGPU (Browser) | :white_check_mark: | :white_check_mark: | | |
+| GLES/WebGL2 (Legacy) | :white_check_mark: | :white_check_mark: | | |
+
+See [WEBGPU.md](WEBGPU.md) for WebGPU backend details.
