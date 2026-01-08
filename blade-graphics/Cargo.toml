@@ -170,5 +170,13 @@ required-features = []
 name = "webgpu-post-fx"
 required-features = []
 
+[[example]]
+name = "webgpu-mandelbrot"
+required-features = []
+
+[[example]]
+name = "webgpu-sprite-batch"
+required-features = []
+
 [lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(gles)', 'cfg(webgpu)', 'cfg(blade_wgpu)'] }
