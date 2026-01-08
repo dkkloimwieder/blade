@@ -555,22 +555,57 @@ for _ in 0..11 {  // ~10,000 bunnies (exponential growth)
 
 Each `increase()` call adds `64 + current_count/2` bunnies.
 
-### 11.3 Automated Chrome Profiling (RECOMMENDED)
+### 11.3 Launch Chrome with WebGPU (REQUIRED)
 
-**Use the chrome-devtools-cli perf.mjs script with `--gpu` flag:**
+**ALWAYS use these flags when launching Chrome for WebGPU development:**
+
+```bash
+google-chrome \
+  --user-data-dir=/path/to/blade/.chrome-profile \
+  --enable-unsafe-webgpu \
+  --enable-features=Vulkan,VulkanFromANGLE \
+  --use-angle=vulkan \
+  --enable-dawn-features=allow_unsafe_apis \
+  http://localhost:8000
+```
+
+**From the blade repo root:**
+
+```bash
+google-chrome \
+  --user-data-dir=$(pwd)/.chrome-profile \
+  --enable-unsafe-webgpu \
+  --enable-features=Vulkan,VulkanFromANGLE \
+  --use-angle=vulkan \
+  --enable-dawn-features=allow_unsafe_apis \
+  http://localhost:8000
+```
+
+**Flag explanation:**
+
+| Flag | Purpose |
+|------|---------|
+| `--user-data-dir=.chrome-profile` | Repo-local profile (persists WebGPU Inspector extension) |
+| `--enable-unsafe-webgpu` | Enable WebGPU API |
+| `--enable-features=Vulkan,VulkanFromANGLE` | Use Vulkan backend (faster than OpenGL) |
+| `--use-angle=vulkan` | Force ANGLE to use Vulkan |
+| `--enable-dawn-features=allow_unsafe_apis` | Enable timestamp queries |
+
+**The `.chrome-profile/` directory in the repo root is the canonical Chrome profile for this project.** Install WebGPU Inspector there once and it persists across sessions.
+
+### 11.4 Automated Chrome Profiling
+
+**Use the chrome-devtools-cli perf.mjs script:**
 
 ```bash
 cd ~/.claude/skills/chrome-devtools-cli
-node scripts/perf.mjs http://localhost:8000 --gpu --duration 5000
+node scripts/perf.mjs http://localhost:8000 --duration 5000
 ```
 
-**CRITICAL:** The `--gpu` flag is REQUIRED for WebGPU profiling. It automatically enables:
-- `--enable-unsafe-webgpu`
-- `--enable-features=Vulkan,VulkanFromANGLE`
-- `--use-angle=vulkan`
-- `--enable-dawn-features=allow_unsafe_apis`
-
-Without `--gpu`, Chrome won't have WebGPU enabled and profiling will fail.
+**WebGPU flags are ALWAYS enabled automatically.** The script:
+1. Finds and uses the repo's `.chrome-profile` directory
+2. Restarts Chrome with all WebGPU flags if it's already running
+3. Launches Chrome with correct flags if not running
 
 **Options:**
 - `--duration <ms>` - Profile duration (default: 5000)
@@ -582,35 +617,14 @@ Without `--gpu`, Chrome won't have WebGPU enabled and profiling will fail.
 
 ```bash
 # Profile for 10 seconds
-node scripts/perf.mjs http://localhost:8000 --gpu --duration 10000
+node scripts/perf.mjs http://localhost:8000 --duration 10000
 
 # Run 5 iterations for benchmarking
-node scripts/perf.mjs http://localhost:8000 --gpu --iterations 5
+node scripts/perf.mjs http://localhost:8000 --iterations 5
 
 # Save results to file
-node scripts/perf.mjs http://localhost:8000 --gpu --output /tmp/bunnymark-perf.json
+node scripts/perf.mjs http://localhost:8000 --output /tmp/bunnymark-perf.json
 ```
-
-### 11.4 Manual Chrome Launch (Alternative)
-
-**With extensions enabled** (for WebGPU Inspector):
-
-```bash
-google-chrome \
-  --enable-unsafe-webgpu \
-  --enable-features=Vulkan,VulkanFromANGLE \
-  --use-angle=vulkan \
-  --enable-dawn-features=allow_unsafe_apis \
-  --user-data-dir=$(pwd)/.chrome-profile \
-  http://localhost:8000
-```
-
-**Key flags:**
-- `--user-data-dir=.chrome-profile` - Repo-local profile (persists extensions, doesn't affect main Chrome)
-- Extensions enabled by default (no `--disable-extensions`)
-- Vulkan backend for best performance on Linux
-
-**Note:** The `.chrome-profile/` directory in the repo root is the canonical Chrome profile for this project. Install WebGPU Inspector there once and it persists.
 
 ### 11.5 Capture with WebGPU Inspector
 
