@@ -39,6 +39,21 @@ Features:
 
 See [docs/WEBGPU.md](../docs/WEBGPU.md) for technical details.
 
+#### WebGPU Examples
+
+These examples demonstrate WebGPU patterns and run in browsers:
+
+| Example | Pattern | Command |
+|---------|---------|---------|
+| [webgpu-triangle](examples/webgpu-triangle/) | Minimal setup, vertex colors | `cargo run-wasm --example webgpu-triangle` |
+| [webgpu-texture](examples/webgpu-texture/) | Texture creation, sampling, upload | `cargo run-wasm --example webgpu-texture` |
+| [webgpu-game-of-life](examples/webgpu-game-of-life/) | Compute ping-pong, storage textures | `cargo run-wasm --example webgpu-game-of-life` |
+| [webgpu-post-fx](examples/webgpu-post-fx/) | Render-to-texture, multi-pass | `cargo run-wasm --example webgpu-post-fx` |
+| [webgpu-mandelbrot](examples/webgpu-mandelbrot/) | Compute shader visualization | `cargo run-wasm --example webgpu-mandelbrot` |
+| [webgpu-sprite-batch](examples/webgpu-sprite-batch/) | Instanced 2D rendering, storage buffer | `cargo run-wasm --example webgpu-sprite-batch` |
+
+All commands require `RUSTFLAGS="--cfg blade_wgpu"` prefix.
+
 ### Vulkan
 
 Required instance extensions:
