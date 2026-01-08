@@ -158,5 +158,17 @@ wasm-bindgen-test = "0.3"
 name = "webgpu-triangle"
 required-features = []
 
+[[example]]
+name = "webgpu-texture"
+required-features = []
+
+[[example]]
+name = "webgpu-game-of-life"
+required-features = []
+
+[[example]]
+name = "webgpu-post-fx"
+required-features = []
+
 [lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(gles)', 'cfg(webgpu)', 'cfg(blade_wgpu)'] }
