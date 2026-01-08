@@ -65,7 +65,7 @@ struct SpriteVertex {
     pos: [f32; 2],
 }
 
-const MAX_BUNNIES: usize = 100_000;
+const MAX_BUNNIES: usize = 1_000_000;
 
 struct Example {
     render_pipeline: gpu::RenderPipeline,
@@ -709,6 +709,21 @@ fn main() {
                     }
                     winit::event::WindowEvent::CloseRequested => {
                         target.exit();
+                    }
+                    winit::event::WindowEvent::KeyboardInput {
+                        event:
+                            winit::event::KeyEvent {
+                                physical_key: winit::keyboard::PhysicalKey::Code(key_code),
+                                state: winit::event::ElementState::Pressed,
+                                ..
+                            },
+                        ..
+                    } => {
+                        if key_code == winit::keyboard::KeyCode::Space {
+                            if let Some(ref mut ex) = *example.borrow_mut() {
+                                ex.increase();
+                            }
+                        }
                     }
                     winit::event::WindowEvent::RedrawRequested => {
                         if let Some(ref mut ex) = *example.borrow_mut() {
