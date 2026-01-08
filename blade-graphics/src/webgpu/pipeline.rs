@@ -286,7 +286,12 @@ impl Context {
         })
     }
 
-    /// Load a shader and create wgpu module
+    /// Load a shader and create wgpu module.
+    ///
+    /// For multi-entry-point shaders, we strip all entry points except the target one.
+    /// This prevents binding conflicts when different entry points have different
+    /// resource requirements. Variables only used by removed entry points become
+    /// dead code and won't appear in the emitted WGSL.
     fn load_shader(
         &self,
         sf: crate::ShaderFunction,
@@ -299,33 +304,63 @@ impl Context {
         let (mut module, module_info) = sf.shader.resolve_constants(sf.constants);
         let wg_size = module.entry_points[ep_index].workgroup_size;
 
-        // Collect entry point stages before mutable borrow
-        let ep_stages: Vec<naga::ShaderStage> = module
-            .entry_points
-            .iter()
-            .map(|ep| ep.stage)
-            .collect();
-
-        // Process ALL entry points to ensure all resource variables have bindings
-        // (wgpu compiles the entire module, not just one entry point)
-        for (ep_idx, &stage) in ep_stages.iter().enumerate() {
-            let ep_info = module_info.get_entry_point(ep_idx);
-            crate::Shader::fill_resource_bindings(
-                &mut module,
-                group_infos,
-                stage,
-                ep_info,
-                group_layouts,
-            );
-        }
+        // Process bindings for the target entry point
+        let target_stage = module.entry_points[ep_index].stage;
+        let ep_info = module_info.get_entry_point(ep_index);
+        crate::Shader::fill_resource_bindings(
+            &mut module,
+            group_infos,
+            target_stage,
+            ep_info,
+            group_layouts,
+        );
 
         let attribute_mappings =
             crate::Shader::fill_vertex_locations(&mut module, ep_index, vertex_fetch_states);
 
+        // Strip all entry points except the target one.
+        let target_ep = module.entry_points.swap_remove(ep_index);
+        module.entry_points.clear();
+        module.entry_points.push(target_ep);
+
+        // Assign placeholder bindings to any remaining unbound resource variables.
+        // These variables are only used by entry points we've stripped, so the
+        // binding values don't matter - they just need to exist for validation.
+        let mut placeholder_group = 15u32; // Use high group number to avoid conflicts
+        let mut placeholder_binding = 0u32;
+        for (_handle, var) in module.global_variables.iter_mut() {
+            // Only resource variables need bindings
+            let needs_binding = matches!(
+                var.space,
+                naga::AddressSpace::Uniform
+                    | naga::AddressSpace::Storage { .. }
+                    | naga::AddressSpace::Handle
+            );
+            if needs_binding && var.binding.is_none() {
+                var.binding = Some(naga::ResourceBinding {
+                    group: placeholder_group,
+                    binding: placeholder_binding,
+                });
+                placeholder_binding += 1;
+                if placeholder_binding >= 16 {
+                    placeholder_binding = 0;
+                    placeholder_group -= 1;
+                }
+            }
+        }
+
+        // Re-validate the stripped module to get correct ModuleInfo
+        let stripped_info = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .expect("Stripped module validation failed");
+
         // Emit the modified module back to WGSL with @group/@binding annotations
         let wgsl_source = naga::back::wgsl::write_string(
             &module,
-            &module_info,
+            &stripped_info,
             naga::back::wgsl::WriterFlags::empty(),
         )
         .expect("Failed to emit WGSL from modified naga module");

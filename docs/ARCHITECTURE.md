@@ -590,7 +590,7 @@ pub mod limits {
     pub const PASS_COUNT: usize = 100;              // Max passes per encoder
     pub const PLAIN_DATA_SIZE: u32 = 256;           // Max inline uniform bytes
     pub const RESOURCES_IN_GROUP: u32 = 8;          // Max bindings per group
-    pub const STORAGE_BUFFER_ALIGNMENT: u64 = 16;   // Storage buffer alignment
+    pub const STORAGE_BUFFER_ALIGNMENT: u64 = 256;  // Storage buffer alignment (WebGPU needs 256)
     pub const ACCELERATION_STRUCTURE_SCRATCH_ALIGNMENT: u64 = 256;
 }
 ```
