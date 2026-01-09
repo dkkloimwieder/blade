@@ -187,7 +187,7 @@ fn generate_html(out_dir: &Path, name: &str) -> Result<()> {
 <body>
     <script type="module">
         import init from './{name}.js';
-        window.addEventListener('load', () => init());
+        window.addEventListener('load', () => init('./{name}_bg.wasm'));
     </script>
 </body>
 </html>
