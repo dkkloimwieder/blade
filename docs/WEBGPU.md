@@ -1266,9 +1266,53 @@ cargo run --target wasm32-unknown-unknown -p blade-graphics --example webgpu-tri
 **Pros**: Cargo runner integration, auto-reload, cleaner CLI
 **Cons**: No DWARF support (yet), requires custom HTML for full-screen
 
-### 19.3 Manual Build with DWARF Debug Symbols
+### 19.3 Debug Build: run-wasm-debug (Recommended)
 
-For source-level debugging in Chrome DevTools:
+The `run-wasm-debug` tool automates DWARF debug builds for source-level Rust debugging in Chrome DevTools.
+
+**Usage:**
+```bash
+RUSTFLAGS="--cfg blade_wgpu" cargo run-wasm-debug --example webgpu-triangle -p blade-graphics
+```
+
+**Server runs on**: http://127.0.0.1:8000
+
+**What it does:**
+1. Builds WASM with `cargo build --target wasm32-unknown-unknown`
+2. Runs wasm-bindgen with `keep_debug(true)` to preserve DWARF symbols
+3. Generates full-screen HTML with proper init call
+4. Serves via Python's http.server
+
+**Options:**
+| Flag | Description |
+|------|-------------|
+| `--example <name>` | Build and run an example |
+| `-p, --package <pkg>` | Specify package |
+| `--release` | Use release profile |
+| `--port <port>` | Server port (default: 8000) |
+
+**Requirements:**
+- Chrome with [C/C++ DevTools Support (DWARF)](https://chromewebstore.google.com/detail/pdcpmagijalfljmkmjngeonclgbbannb) extension
+- Python 3 (for http.server)
+
+**Debugging workflow:**
+1. Run `cargo run-wasm-debug --example <name>`
+2. Open http://127.0.0.1:8000 in Chrome
+3. Open DevTools (F12) > Sources tab
+4. Look for `file://` sources in the left panel
+5. Set breakpoints in Rust source files
+6. Refresh page to hit breakpoints
+
+**Output structure** (`target/wasm-debug-out/`):
+```
+index.html              # Generated HTML
+webgpu-triangle.js      # wasm-bindgen JS bindings
+webgpu-triangle_bg.wasm # WASM with DWARF debug info (~70MB)
+```
+
+### 19.4 Manual Build with DWARF Debug Symbols
+
+For cases where you need more control over the build process:
 
 ```bash
 # 1. Build with debug info
@@ -1277,7 +1321,7 @@ RUSTFLAGS="--cfg blade_wgpu" cargo build --target wasm32-unknown-unknown \
 
 # 2. Run wasm-bindgen with --keep-debug
 wasm-bindgen --keep-debug --web --out-dir ./debug-out \
-  target/wasm32-unknown-unknown/debug/examples/webgpu_triangle.wasm
+  target/wasm32-unknown-unknown/debug/examples/webgpu-triangle.wasm
 
 # 3. Create index.html in debug-out/
 cat > debug-out/index.html << 'EOF'
@@ -1286,8 +1330,8 @@ cat > debug-out/index.html << 'EOF'
 <head><style>body{margin:0}canvas{width:100vw;height:100vh;display:block}</style></head>
 <body>
 <script type="module">
-import init from './webgpu_triangle.js';
-init();
+import init from './webgpu-triangle.js';
+init('./webgpu-triangle_bg.wasm');
 </script>
 </body>
 </html>
@@ -1297,22 +1341,16 @@ EOF
 python3 -m http.server 8000 -d ./debug-out
 ```
 
-**Requirements:**
-- Chrome with [C/C++ DevTools Support (DWARF)](https://chromewebstore.google.com/detail/pdcpmagijalfljmkmjngeonclgbbannb) extension
-- `debug = true` in Cargo.toml profile
+### 19.5 Tool Comparison
 
-**Pros**: Full source-level Rust debugging
-**Cons**: Multi-step process, manual HTML
-
-### 19.4 Tool Comparison
-
-| Feature | cargo-run-wasm | wasm-server-runner | Manual |
-|---------|---------------|-------------------|--------|
-| Setup complexity | Low | Medium | High |
-| DWARF debug | No | No | Yes |
-| Auto-reload | No | Yes | No |
-| Custom HTML | Built-in | Env var | Manual |
-| Port | 8000 | 1334 | Any |
+| Feature | cargo-run-wasm | wasm-server-runner | run-wasm-debug | Manual |
+|---------|---------------|-------------------|----------------|--------|
+| Setup complexity | Low | Medium | Low | High |
+| DWARF debug | No | No | Yes | Yes |
+| Auto-reload | No | Yes | No | No |
+| Custom HTML | Built-in | Env var | Built-in | Manual |
+| Port | 8000 | 1334 | 8000 | Any |
+| Use case | Quick testing | Development | Debugging | Full control |
 
 ---
 
