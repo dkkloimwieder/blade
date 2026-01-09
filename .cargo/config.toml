@@ -1,5 +1,6 @@
 [alias]
 run-wasm = "run --release --package run-wasm --"
+run-wasm-debug = "run --package run-wasm-debug --"
 
 [target.wasm32-unknown-unknown]
 runner = "wasm-server-runner"

@@ -1,0 +1,10 @@
+[package]
+name = "run-wasm-debug"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "WASM runner with DWARF debug symbol preservation"
+
+[dependencies]
+wasm-bindgen-cli-support = "0.2"
+anyhow = "1.0"
