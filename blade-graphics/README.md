@@ -54,6 +54,40 @@ These examples demonstrate WebGPU patterns and run in browsers:
 
 All commands require `RUSTFLAGS="--cfg blade_wgpu"` prefix.
 
+#### WASM Event Loop Best Practices
+
+When writing WASM examples with winit, use `ControlFlow::Wait` instead of `ControlFlow::Poll`:
+
+```rust
+// ❌ BAD: Hot loop burns 95% of script time on async overhead
+target.set_control_flow(winit::event_loop::ControlFlow::Poll);
+
+// ✅ GOOD: Browser throttles to vsync via requestAnimationFrame
+target.set_control_flow(winit::event_loop::ControlFlow::Wait);
+```
+
+**Why?** On WASM, `Poll` continuously spins the event loop, wasting CPU on scheduler overhead (`cancelAnimationFrame`, `postTask`, `abort`). `Wait` lets the browser handle timing efficiently.
+
+| Pattern | Script Time | CPU Usage |
+|---------|-------------|-----------|
+| `Poll` + `request_redraw()` | 2400-3900ms | High (hot loop) |
+| `Wait` + `request_redraw()` | 100-270ms | Low (browser-throttled) |
+
+Both achieve the same ~120 FPS, but `Wait` uses **8-35x less JavaScript overhead**.
+
+**Platform-specific pattern** (from `examples/particle`):
+```rust
+// WASM: Use Wait - browser handles timing
+#[cfg(target_arch = "wasm32")]
+target.set_control_flow(ControlFlow::Wait);
+
+// Native: Use WaitUntil for smooth animation with power efficiency
+#[cfg(not(target_arch = "wasm32"))]
+target.set_control_flow(ControlFlow::WaitUntil(next_frame_time));
+```
+
+See [winit ControlFlow docs](https://docs.rs/winit/latest/winit/event_loop/enum.ControlFlow.html) for details.
+
 ### Vulkan
 
 Required instance extensions:

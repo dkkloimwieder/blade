@@ -432,6 +432,8 @@ fn main() {
 
     event_loop
         .run(move |event, target| {
+            // Use Wait instead of Poll on WASM - browser handles timing via requestAnimationFrame.
+            // Poll would create a hot loop burning 95% of script time on async scheduler overhead.
             target.set_control_flow(winit::event_loop::ControlFlow::Wait);
             match event {
                 winit::event::Event::AboutToWait => {
