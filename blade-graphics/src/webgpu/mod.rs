@@ -78,12 +78,14 @@ struct TimingFrame {
     query_set: wgpu::QuerySet,
     /// Buffer to resolve query results into
     resolve_buffer: wgpu::Buffer,
-    /// Mappable buffer for CPU readback
-    readback_buffer: wgpu::Buffer,
+    /// Mappable buffer for CPU readback (Arc for WASM async sharing)
+    readback_buffer: std::sync::Arc<wgpu::Buffer>,
     /// Pass names for this frame (indexed by query pair)
     pass_names: Vec<String>,
     /// Number of passes recorded this frame
     pass_count: u32,
+    /// Tracks if buffer mapping is in progress (WASM async)
+    mapping_in_progress: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl TimingFrame {
@@ -114,9 +116,10 @@ impl TimingFrame {
         Self {
             query_set,
             resolve_buffer,
-            readback_buffer,
+            readback_buffer: std::sync::Arc::new(readback_buffer),
             pass_names: Vec::with_capacity(MAX_TIMING_PASSES as usize),
             pass_count: 0,
+            mapping_in_progress: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -134,9 +137,8 @@ pub(super) struct TimingQueryPool {
     current_frame: usize,
     /// Timestamp period in nanoseconds per tick (from queue)
     timestamp_period: f32,
-    /// Collected timing results from previous frame (native only)
-    #[cfg(not(target_arch = "wasm32"))]
-    results: Vec<(String, std::time::Duration)>,
+    /// Collected timing results (shared for async WASM readback)
+    results: std::sync::Arc<std::sync::Mutex<Vec<(String, std::time::Duration)>>>,
 }
 
 impl TimingQueryPool {
@@ -145,8 +147,7 @@ impl TimingQueryPool {
             frames: None,
             current_frame: 0,
             timestamp_period: 1.0, // Default, will be set from queue
-            #[cfg(not(target_arch = "wasm32"))]
-            results: Vec::new(),
+            results: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -192,6 +193,17 @@ impl TimingQueryPool {
 
         if frame.pass_count == 0 {
             return;
+        }
+
+        // On WASM, check if this buffer is still being mapped from a previous frame
+        // If so, skip the copy to avoid "buffer used while mapped" errors
+        #[cfg(target_arch = "wasm32")]
+        {
+            use std::sync::atomic::Ordering;
+            if frame.mapping_in_progress.load(Ordering::SeqCst) {
+                // Buffer still mapped - skip this frame's timing data
+                return;
+            }
         }
 
         let query_count = frame.pass_count * 2;
@@ -243,8 +255,9 @@ impl TimingQueryPool {
             let data = slice.get_mapped_range();
             let timestamps: &[u64] = bytemuck::cast_slice(&data);
 
-            // Process timing data directly here
-            self.results.clear();
+            // Process timing data
+            let mut results = self.results.lock().unwrap();
+            results.clear();
             for (i, name) in pass_names.iter().enumerate() {
                 let begin_idx = i * 2;
                 let end_idx = begin_idx + 1;
@@ -252,7 +265,7 @@ impl TimingQueryPool {
                     let begin_tick = timestamps[begin_idx];
                     let end_tick = timestamps[end_idx];
                     let duration_ns = ((end_tick - begin_tick) as f64 * period_ns) as u64;
-                    self.results.push((name.clone(), std::time::Duration::from_nanos(duration_ns)));
+                    results.push((name.clone(), std::time::Duration::from_nanos(duration_ns)));
                 }
             }
 
@@ -265,12 +278,15 @@ impl TimingQueryPool {
 
     /// Advance to next frame (WASM version)
     ///
-    /// Note: GPU timing queries on WASM require browser flags to be enabled
-    /// (e.g., --enable-dawn-features=allow_unsafe_apis in Chrome).
-    /// Even when enabled, async buffer mapping for readback is complex.
-    /// For now, we skip readback and timing results will be empty on WASM.
+    /// Uses async buffer mapping via wasm_bindgen_futures::spawn_local.
+    /// Results will be available in the next frame after mapping completes.
+    ///
+    /// Note: GPU timing queries on WASM require the timestamp-query feature
+    /// to be enabled in the browser.
     #[cfg(target_arch = "wasm32")]
     pub fn advance_frame(&mut self) {
+        use std::sync::atomic::Ordering;
+
         let Some(ref mut frames) = self.frames else { return };
 
         // Move to next frame
@@ -285,25 +301,66 @@ impl TimingQueryPool {
             return;
         }
 
-        // On WASM, GPU timing queries require special browser flags and async
-        // buffer mapping is complex. Skip readback for now.
-        // Users should use browser DevTools Performance tab for GPU profiling.
-        readback_frame.reset();
+        // Check if a mapping operation is already in progress for this buffer
+        // Skip if the previous async mapping hasn't completed yet
+        if readback_frame.mapping_in_progress.swap(true, Ordering::SeqCst) {
+            // Already mapping - skip this readback to avoid "buffer used while mapped" error
+            return;
+        }
+
+        // Clone data needed for async task
+        let buffer = readback_frame.readback_buffer.clone();
+        let pass_names = std::mem::take(&mut readback_frame.pass_names);
+        let pass_count = readback_frame.pass_count;
+        let period_ns = self.timestamp_period as f64;
+        let results = self.results.clone();
+        let mapping_flag = readback_frame.mapping_in_progress.clone();
+
+        readback_frame.pass_count = 0;
+
+        // Set up async buffer mapping
+        // We use wgpu's callback mechanism and process results when ready
+        // Clone the Arc for use inside the closure
+        let buffer_for_callback = buffer.clone();
+        buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| {
+            if result.is_err() {
+                // Clear the flag even on error so we can try again
+                mapping_flag.store(false, Ordering::SeqCst);
+                return;
+            }
+
+            // Buffer is now mapped, read the timestamps
+            let data = buffer_for_callback.slice(..).get_mapped_range();
+            let timestamps: &[u64] = bytemuck::cast_slice(&data);
+
+            // Process timing data
+            if let Ok(mut results_guard) = results.lock() {
+                results_guard.clear();
+                for (i, name) in pass_names.iter().enumerate().take(pass_count as usize) {
+                    let begin_idx = i * 2;
+                    let end_idx = begin_idx + 1;
+                    if end_idx < timestamps.len() {
+                        let begin_tick = timestamps[begin_idx];
+                        let end_tick = timestamps[end_idx];
+                        if end_tick >= begin_tick {
+                            let duration_ns = ((end_tick - begin_tick) as f64 * period_ns) as u64;
+                            results_guard.push((name.clone(), std::time::Duration::from_nanos(duration_ns)));
+                        }
+                    }
+                }
+            }
+
+            drop(data);
+            buffer_for_callback.unmap();
+
+            // Clear the flag after unmapping is complete
+            mapping_flag.store(false, Ordering::SeqCst);
+        });
     }
 
     /// Get timing results from the most recently completed frame
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn results(&self) -> &[(String, std::time::Duration)] {
-        &self.results
-    }
-
-    /// Get timing results (WASM version)
-    ///
-    /// Returns empty - WASM timing readback not implemented.
-    /// Use browser DevTools Performance tab for GPU profiling.
-    #[cfg(target_arch = "wasm32")]
-    pub fn results(&self) -> &[(String, std::time::Duration)] {
-        &[] // Timing readback not available on WASM
+    pub fn results(&self) -> Vec<(String, std::time::Duration)> {
+        self.results.lock().unwrap().clone()
     }
 }
 
@@ -884,10 +941,10 @@ impl Context {
     /// Get GPU pass timing results from the most recently completed frame.
     ///
     /// Results are available with a 2-frame delay due to triple buffering.
-    /// Returns empty slice if timing is not enabled or not yet available.
+    /// Returns empty if timing is not enabled or not yet available.
     pub fn timing_results(&self) -> Vec<(String, std::time::Duration)> {
         let pool = self.timing_pool.read().unwrap();
-        pool.results().to_vec()
+        pool.results()
     }
 
     /// Get bind group cache statistics: (hits, misses, current_size)

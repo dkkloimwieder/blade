@@ -87,6 +87,8 @@ struct Example {
     window_size: winit::dpi::PhysicalSize<u32>,
     // Current color tint
     current_color: ColorTint,
+    // Frame counter for timing display
+    frame_count: u32,
 }
 
 impl Example {
@@ -109,7 +111,7 @@ impl Example {
             gpu::Context::init(gpu::ContextDesc {
                 presentation: true,
                 validation: cfg!(debug_assertions),
-                timing: false,
+                timing: true, // Enable GPU timing
                 capture: false,
                 overlay: false,
                 device_id: 0,
@@ -124,7 +126,7 @@ impl Example {
         let context = gpu::Context::init_async(gpu::ContextDesc {
             presentation: true,
             validation: cfg!(debug_assertions),
-            timing: false,
+            timing: true, // Enable GPU timing
             capture: false,
             overlay: false,
             device_id: 0,
@@ -188,6 +190,7 @@ impl Example {
             prev_sync_point: None,
             window_size,
             current_color: ColorTint::none(),
+            frame_count: 0,
         }
     }
 
@@ -240,6 +243,26 @@ impl Example {
 
         self.command_encoder.present(frame);
         self.prev_sync_point = Some(self.context.submit(&mut self.command_encoder));
+
+        // Display GPU timing every 60 frames
+        self.frame_count += 1;
+        if self.frame_count % 60 == 0 {
+            let timing = self.context.timing_results();
+            if !timing.is_empty() {
+                #[cfg(target_arch = "wasm32")]
+                {
+                    for (name, duration) in &timing {
+                        log::info!("GPU timing - {}: {:?}", name, duration);
+                    }
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    for (name, duration) in &timing {
+                        println!("GPU timing - {}: {:?}", name, duration);
+                    }
+                }
+            }
+        }
     }
 
     fn deinit(mut self) {
