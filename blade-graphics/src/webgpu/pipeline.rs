@@ -326,8 +326,9 @@ impl Context {
         // Assign placeholder bindings to any remaining unbound resource variables.
         // These variables are only used by entry points we've stripped, so the
         // binding values don't matter - they just need to exist for validation.
-        let mut placeholder_group = 15u32; // Use high group number to avoid conflicts
-        let mut placeholder_binding = 0u32;
+        // WebGPU only allows groups 0-3, so we use group 3 with high binding numbers.
+        let placeholder_group = 3u32;
+        let mut placeholder_binding = 1000u32; // High binding number to avoid conflicts
         for (_handle, var) in module.global_variables.iter_mut() {
             // Only resource variables need bindings
             let needs_binding = matches!(
@@ -342,10 +343,6 @@ impl Context {
                     binding: placeholder_binding,
                 });
                 placeholder_binding += 1;
-                if placeholder_binding >= 16 {
-                    placeholder_binding = 0;
-                    placeholder_group -= 1;
-                }
             }
         }
 

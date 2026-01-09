@@ -1,12 +1,82 @@
 //! Minimal WebGPU triangle example for blade-graphics
 //!
 //! This example tests the WebGPU backend with a simple colored triangle.
+//! Demonstrates interactive color selection via keyboard (1-6 keys).
+//!
 //! Run with: RUSTFLAGS="--cfg blade_wgpu" cargo run --example webgpu-triangle
 //! For WASM: RUSTFLAGS="--cfg blade_wgpu" cargo run-wasm --example webgpu-triangle
 
 #![allow(irrefutable_let_patterns)]
 
 use blade_graphics as gpu;
+use bytemuck::{Pod, Zeroable};
+use gpu::ShaderData;
+
+// -----------------------------------------------------------------------------
+// Color Tint Uniform
+// -----------------------------------------------------------------------------
+
+/// Color tint uniform passed to the fragment shader.
+/// The alpha component controls blend strength: 0 = vertex colors, 1 = full tint.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ColorTint {
+    rgba: [f32; 4],
+}
+
+impl ColorTint {
+    fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
+        Self { rgba: [r, g, b, a] }
+    }
+
+    /// No tint - show original vertex colors
+    fn none() -> Self {
+        Self::new(0.0, 0.0, 0.0, 0.0)
+    }
+
+    /// Preset colors with full tint
+    fn red() -> Self {
+        Self::new(1.0, 0.2, 0.2, 1.0)
+    }
+    fn green() -> Self {
+        Self::new(0.2, 1.0, 0.2, 1.0)
+    }
+    fn blue() -> Self {
+        Self::new(0.2, 0.2, 1.0, 1.0)
+    }
+    fn yellow() -> Self {
+        Self::new(1.0, 1.0, 0.2, 1.0)
+    }
+    fn purple() -> Self {
+        Self::new(0.8, 0.2, 1.0, 1.0)
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Shader Data Binding
+// -----------------------------------------------------------------------------
+
+struct TriangleParams {
+    color_tint: ColorTint,
+}
+
+impl gpu::ShaderData for TriangleParams {
+    fn layout() -> gpu::ShaderDataLayout {
+        gpu::ShaderDataLayout {
+            // Matches WGSL: var<uniform> uniforms: Uniforms (16 bytes for vec4<f32>)
+            bindings: vec![("uniforms", gpu::ShaderBinding::Plain { size: 16 })],
+        }
+    }
+
+    fn fill(&self, mut ctx: gpu::PipelineContext) {
+        use gpu::ShaderBindable as _;
+        self.color_tint.bind_to(&mut ctx, 0);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Example Application
+// -----------------------------------------------------------------------------
 
 struct Example {
     context: gpu::Context,
@@ -15,6 +85,8 @@ struct Example {
     command_encoder: gpu::CommandEncoder,
     prev_sync_point: Option<gpu::SyncPoint>,
     window_size: winit::dpi::PhysicalSize<u32>,
+    // Current color tint
+    current_color: ColorTint,
 }
 
 impl Example {
@@ -81,10 +153,10 @@ impl Example {
             source: &shader_source,
         });
 
-        // Create render pipeline (no data bindings needed)
+        // Create render pipeline with color tint uniform binding
         let pipeline = context.create_render_pipeline(gpu::RenderPipelineDesc {
             name: "triangle",
-            data_layouts: &[],
+            data_layouts: &[&TriangleParams::layout()],
             vertex: shader.at("vs_main"),
             vertex_fetches: &[],
             fragment: Some(shader.at("fs_main")),
@@ -106,6 +178,8 @@ impl Example {
             buffer_count: 2,
         });
 
+        println!("Controls: 1-5 = preset colors, 0 = original vertex colors, Esc = quit");
+
         Self {
             context,
             surface,
@@ -113,7 +187,12 @@ impl Example {
             command_encoder,
             prev_sync_point: None,
             window_size,
+            current_color: ColorTint::none(),
         }
+    }
+
+    fn set_color(&mut self, color: ColorTint) {
+        self.current_color = color;
     }
 
     fn resize(&mut self, size: winit::dpi::PhysicalSize<u32>) {
@@ -137,6 +216,11 @@ impl Example {
         // Record commands
         self.command_encoder.start();
 
+        // Prepare shader params with current color
+        let params = TriangleParams {
+            color_tint: self.current_color,
+        };
+
         if let mut pass = self.command_encoder.render(
             "triangle",
             gpu::RenderTargetSet {
@@ -149,6 +233,7 @@ impl Example {
             },
         ) {
             if let mut encoder = pass.with(&self.pipeline) {
+                encoder.bind(0, &params);
                 encoder.draw(0, 3, 0, 1);
             }
         }
@@ -197,8 +282,16 @@ fn main() {
                             },
                         ..
                     } => {
-                        if key_code == winit::keyboard::KeyCode::Escape {
-                            target.exit();
+                        use winit::keyboard::KeyCode;
+                        match key_code {
+                            KeyCode::Escape => target.exit(),
+                            KeyCode::Digit0 => example.set_color(ColorTint::none()),
+                            KeyCode::Digit1 => example.set_color(ColorTint::red()),
+                            KeyCode::Digit2 => example.set_color(ColorTint::green()),
+                            KeyCode::Digit3 => example.set_color(ColorTint::blue()),
+                            KeyCode::Digit4 => example.set_color(ColorTint::yellow()),
+                            KeyCode::Digit5 => example.set_color(ColorTint::purple()),
+                            _ => {}
                         }
                     }
                     winit::event::WindowEvent::CloseRequested => {
@@ -221,6 +314,7 @@ fn main() {
 fn main() {
     use std::cell::RefCell;
     use std::rc::Rc;
+    use wasm_bindgen::prelude::*;
     use winit::platform::web::WindowExtWebSys as _;
 
     console_error_panic_hook::set_once();
@@ -234,15 +328,80 @@ fn main() {
     // Set up canvas
     let canvas = window.canvas().unwrap();
     canvas.set_id(gpu::CANVAS_ID);
-    web_sys::window()
+
+    let document = web_sys::window()
         .and_then(|win| win.document())
-        .and_then(|doc| doc.body())
-        .and_then(|body| body.append_child(&web_sys::Element::from(canvas)).ok())
+        .expect("couldn't get document");
+    let body = document.body().expect("couldn't get body");
+
+    body.append_child(&web_sys::Element::from(canvas))
         .expect("couldn't append canvas to document body");
+
+    // Create color dropdown
+    let select: web_sys::HtmlSelectElement = document
+        .create_element("select")
+        .expect("couldn't create select")
+        .dyn_into()
+        .unwrap();
+    select.set_id("color-picker");
+    select
+        .style()
+        .set_property("position", "absolute")
+        .unwrap();
+    select.style().set_property("top", "10px").unwrap();
+    select.style().set_property("left", "10px").unwrap();
+    select.style().set_property("font-size", "16px").unwrap();
+    select.style().set_property("padding", "5px").unwrap();
+
+    let colors = [
+        ("Original", "0"),
+        ("Red", "1"),
+        ("Green", "2"),
+        ("Blue", "3"),
+        ("Yellow", "4"),
+        ("Purple", "5"),
+    ];
+
+    for (name, value) in colors {
+        let option: web_sys::HtmlOptionElement = document
+            .create_element("option")
+            .expect("couldn't create option")
+            .dyn_into()
+            .unwrap();
+        option.set_value(value);
+        option.set_text_content(Some(name));
+        select.append_child(&option).unwrap();
+    }
+
+    body.append_child(&select).expect("couldn't append select");
 
     // State machine: None = initializing, Some = ready
     let example: Rc<RefCell<Option<Example>>> = Rc::new(RefCell::new(None));
     let init_started: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+
+    // Set up dropdown change handler
+    let example_for_select = example.clone();
+    let on_change = Closure::<dyn FnMut(_)>::new(move |event: web_sys::Event| {
+        let target = event.target().unwrap();
+        let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+        let value = select.value();
+        if let Some(ref mut ex) = *example_for_select.borrow_mut() {
+            let color = match value.as_str() {
+                "0" => ColorTint::none(),
+                "1" => ColorTint::red(),
+                "2" => ColorTint::green(),
+                "3" => ColorTint::blue(),
+                "4" => ColorTint::yellow(),
+                "5" => ColorTint::purple(),
+                _ => ColorTint::none(),
+            };
+            ex.set_color(color);
+        }
+    });
+    select
+        .add_event_listener_with_callback("change", on_change.as_ref().unchecked_ref())
+        .unwrap();
+    on_change.forget(); // Leak the closure to keep it alive
 
     let example_clone = example.clone();
     let init_started_clone = init_started.clone();
@@ -270,6 +429,28 @@ fn main() {
                     winit::event::WindowEvent::Resized(size) => {
                         if let Some(ref mut ex) = *example.borrow_mut() {
                             ex.resize(size);
+                        }
+                    }
+                    winit::event::WindowEvent::KeyboardInput {
+                        event:
+                            winit::event::KeyEvent {
+                                physical_key: winit::keyboard::PhysicalKey::Code(key_code),
+                                state: winit::event::ElementState::Pressed,
+                                ..
+                            },
+                        ..
+                    } => {
+                        use winit::keyboard::KeyCode;
+                        if let Some(ref mut ex) = *example.borrow_mut() {
+                            match key_code {
+                                KeyCode::Digit0 => ex.set_color(ColorTint::none()),
+                                KeyCode::Digit1 => ex.set_color(ColorTint::red()),
+                                KeyCode::Digit2 => ex.set_color(ColorTint::green()),
+                                KeyCode::Digit3 => ex.set_color(ColorTint::blue()),
+                                KeyCode::Digit4 => ex.set_color(ColorTint::yellow()),
+                                KeyCode::Digit5 => ex.set_color(ColorTint::purple()),
+                                _ => {}
+                            }
                         }
                     }
                     winit::event::WindowEvent::CloseRequested => {

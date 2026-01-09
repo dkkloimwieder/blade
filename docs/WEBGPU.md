@@ -592,10 +592,12 @@ impl<T: bytemuck::Pod> crate::ShaderBindable for T {
 ### 8.1 Shader Compilation Flow
 
 ```
-WGSL Source → Naga Parse → Fill Bindings → Naga WGSL Backend → wgpu Compile
+WGSL Source → Naga Parse → Fill Bindings → Strip Entry Points → Placeholder Bindings → Re-validate → Naga WGSL Backend → wgpu Compile
 ```
 
-**File**: `pipeline.rs:299-354`
+**File**: `pipeline.rs:299-380`
+
+For multi-entry-point shaders, we strip all entry points except the target one. This prevents binding conflicts when different entry points have different resource requirements.
 
 ```rust
 fn load_shader(
@@ -606,23 +608,50 @@ fn load_shader(
     vertex_fetch_states: &[crate::VertexFetchState],
 ) -> CompiledShader {
     let ep_index = sf.entry_point_index();
-    let (mut module, module_info) = sf.shader.resolve_constants(&sf.constants);
+    let (mut module, module_info) = sf.shader.resolve_constants(sf.constants);
 
-    // Process ALL entry points to ensure all resource variables have bindings
-    // (wgpu compiles the entire module, not just one entry point)
-    for (ep_idx, &stage) in ep_stages.iter().enumerate() {
-        let ep_info = module_info.get_entry_point(ep_idx);
-        crate::Shader::fill_resource_bindings(
-            &mut module, group_infos, stage, ep_info, group_layouts,
-        );
-    }
+    // Process bindings for the TARGET entry point only
+    let target_stage = module.entry_points[ep_index].stage;
+    let ep_info = module_info.get_entry_point(ep_index);
+    crate::Shader::fill_resource_bindings(
+        &mut module, group_infos, target_stage, ep_info, group_layouts,
+    );
 
     // Fill vertex attribute locations
     let attribute_mappings = crate::Shader::fill_vertex_locations(&mut module, ep_index, vertex_fetch_states);
 
+    // Strip all entry points except the target one
+    let target_ep = module.entry_points.swap_remove(ep_index);
+    module.entry_points.clear();
+    module.entry_points.push(target_ep);
+
+    // Assign placeholder bindings to any remaining unbound resource variables
+    // WebGPU only allows groups 0-3, so we use group 3 with high binding numbers
+    let placeholder_group = 3u32;
+    let mut placeholder_binding = 1000u32;
+    for (_handle, var) in module.global_variables.iter_mut() {
+        let needs_binding = matches!(
+            var.space,
+            naga::AddressSpace::Uniform | naga::AddressSpace::Storage { .. } | naga::AddressSpace::Handle
+        );
+        if needs_binding && var.binding.is_none() {
+            var.binding = Some(naga::ResourceBinding {
+                group: placeholder_group,
+                binding: placeholder_binding,
+            });
+            placeholder_binding += 1;
+        }
+    }
+
+    // Re-validate the stripped module to get correct ModuleInfo
+    let stripped_info = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    ).validate(&module).expect("Stripped module validation failed");
+
     // Emit modified module back to WGSL with @group/@binding annotations
     let wgsl_source = naga::back::wgsl::write_string(
-        &module, &module_info, naga::back::wgsl::WriterFlags::empty(),
+        &module, &stripped_info, naga::back::wgsl::WriterFlags::empty(),
     ).expect("Failed to emit WGSL from modified naga module");
 
     let wgpu_module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -633,6 +662,8 @@ fn load_shader(
     CompiledShader { module: wgpu_module, entry_point: sf.entry_point.to_string(), ... }
 }
 ```
+
+**Why entry point stripping?** WebGPU compiles the entire shader module as a unit. If a shader has multiple entry points with different resource requirements (e.g., a compute shader with reset/emit/update and a render shader with vs/fs), all variables must have valid bindings even if unused by the target entry point. Stripping removes unused entry points, making their variables dead code.
 
 ### 8.2 Error Scope Handling
 
@@ -1169,6 +1200,119 @@ pe.draw(0, 4, 0, bunny_count);
 ```
 
 **Result**: 99%+ cache hit rate, single draw call for 100k+ sprites.
+
+---
+
+## 19. WASM Development Tools
+
+### 19.1 Default: cargo-run-wasm
+
+The default WASM runner, configured via alias in `.cargo/config.toml`:
+
+```bash
+RUSTFLAGS="--cfg blade_wgpu" cargo run-wasm --example bunnymark
+```
+
+**Pros**: Simple, integrated
+**Cons**: No DWARF debug symbol support
+
+### 19.2 Alternative: wasm-server-runner
+
+A cleaner cargo runner integration with auto-reload support.
+
+**Installation:**
+```bash
+cargo install wasm-server-runner
+```
+
+**Configuration** (`.cargo/config.toml`):
+```toml
+[target.wasm32-unknown-unknown]
+runner = "wasm-server-runner"
+```
+
+**Custom HTML Template** (`wasm-index.html`):
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Blade WASM</title>
+    <style>
+        body { margin: 0px; }
+        canvas { width: 100vw; height: 100vh; display: block; }
+    </style>
+</head>
+<body>
+    {{ NO_MODULE }}
+    <script type="module">
+        // {{ MODULE }}
+        wasm_bindgen('./api/wasm.wasm');
+    </script>
+</body>
+</html>
+```
+
+**Usage:**
+```bash
+WASM_SERVER_RUNNER_CUSTOM_INDEX_HTML=wasm-index.html \
+RUSTFLAGS="--cfg blade_wgpu" \
+cargo run --target wasm32-unknown-unknown -p blade-graphics --example webgpu-triangle
+```
+
+**Server runs on**: http://127.0.0.1:1334
+
+**Pros**: Cargo runner integration, auto-reload, cleaner CLI
+**Cons**: No DWARF support (yet), requires custom HTML for full-screen
+
+### 19.3 Manual Build with DWARF Debug Symbols
+
+For source-level debugging in Chrome DevTools:
+
+```bash
+# 1. Build with debug info
+RUSTFLAGS="--cfg blade_wgpu" cargo build --target wasm32-unknown-unknown \
+  -p blade-graphics --example webgpu-triangle
+
+# 2. Run wasm-bindgen with --keep-debug
+wasm-bindgen --keep-debug --web --out-dir ./debug-out \
+  target/wasm32-unknown-unknown/debug/examples/webgpu_triangle.wasm
+
+# 3. Create index.html in debug-out/
+cat > debug-out/index.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<head><style>body{margin:0}canvas{width:100vw;height:100vh;display:block}</style></head>
+<body>
+<script type="module">
+import init from './webgpu_triangle.js';
+init();
+</script>
+</body>
+</html>
+EOF
+
+# 4. Serve
+python3 -m http.server 8000 -d ./debug-out
+```
+
+**Requirements:**
+- Chrome with [C/C++ DevTools Support (DWARF)](https://chromewebstore.google.com/detail/pdcpmagijalfljmkmjngeonclgbbannb) extension
+- `debug = true` in Cargo.toml profile
+
+**Pros**: Full source-level Rust debugging
+**Cons**: Multi-step process, manual HTML
+
+### 19.4 Tool Comparison
+
+| Feature | cargo-run-wasm | wasm-server-runner | Manual |
+|---------|---------------|-------------------|--------|
+| Setup complexity | Low | Medium | High |
+| DWARF debug | No | No | Yes |
+| Auto-reload | No | Yes | No |
+| Custom HTML | Built-in | Env var | Manual |
+| Port | 8000 | 1334 | Any |
 
 ---
 

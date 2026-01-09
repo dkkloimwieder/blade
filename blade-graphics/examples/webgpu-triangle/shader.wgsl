@@ -1,4 +1,11 @@
 // Minimal triangle shader for WebGPU testing
+// Supports runtime color tinting via uniform
+
+struct Uniforms {
+    color_tint: vec4<f32>,
+}
+
+var<uniform> uniforms: Uniforms;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -27,5 +34,9 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(input.color, 1.0);
+    // Mix vertex color with tint based on tint alpha
+    // tint.a = 0: pure vertex colors, tint.a = 1: pure tint color
+    let vertex_color = vec4<f32>(input.color, 1.0);
+    let tinted = mix(vertex_color.rgb, uniforms.color_tint.rgb, uniforms.color_tint.a);
+    return vec4<f32>(tinted, 1.0);
 }

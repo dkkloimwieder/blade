@@ -1,8 +1,8 @@
 # WebGPU Triangle Example
 
-> Minimal "hello world" for blade-graphics WebGPU rendering
+> Interactive "hello world" for blade-graphics WebGPU rendering
 
-This is the simplest possible render example demonstrating core blade-graphics patterns for WebGPU.
+This example demonstrates core blade-graphics patterns for WebGPU with interactive color selection.
 
 ## What This Example Demonstrates
 
@@ -11,9 +11,11 @@ This is the simplest possible render example demonstrating core blade-graphics p
 | **Context initialization** | Sync (native) and async (WASM) paths |
 | **Surface creation** | Window surface with format detection |
 | **Shader loading** | Platform-aware (embedded for WASM, filesystem for native) |
-| **Render pipeline** | Minimal pipeline with no data bindings |
+| **Uniform bindings** | ShaderData trait implementation for color tint |
+| **Render pipeline** | Pipeline with data layouts for uniform binding |
 | **Render loop** | Frame acquisition, command encoding, submission |
 | **Synchronization** | Waiting for previous frame before reuse |
+| **Interactive controls** | Keyboard (0-5) + HTML dropdown (WASM) |
 | **Resource cleanup** | Proper destruction order |
 
 ## Running
@@ -83,12 +85,39 @@ let shader_source = include_str!("shader.wgsl");
 let shader_source = std::fs::read_to_string("path/to/shader.wgsl").unwrap();
 ```
 
-### 3. Minimal Render Pipeline
+### 3. Uniform Bindings (ShaderData Trait)
+
+```rust
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ColorTint {
+    rgba: [f32; 4],  // RGB + alpha for blend strength
+}
+
+struct TriangleParams {
+    color_tint: ColorTint,
+}
+
+impl gpu::ShaderData for TriangleParams {
+    fn layout() -> gpu::ShaderDataLayout {
+        gpu::ShaderDataLayout {
+            bindings: vec![("uniforms", gpu::ShaderBinding::Plain { size: 16 })],
+        }
+    }
+
+    fn fill(&self, mut ctx: gpu::PipelineContext) {
+        use gpu::ShaderBindable as _;
+        self.color_tint.bind_to(&mut ctx, 0);
+    }
+}
+```
+
+### 4. Render Pipeline with Data Layouts
 
 ```rust
 let pipeline = context.create_render_pipeline(gpu::RenderPipelineDesc {
     name: "triangle",
-    data_layouts: &[],           // No uniform/storage bindings
+    data_layouts: &[&TriangleParams::layout()],  // Uniform binding
     vertex: shader.at("vs_main"),
     vertex_fetches: &[],         // No vertex buffers (positions in shader)
     fragment: Some(shader.at("fs_main")),
@@ -106,7 +135,7 @@ let pipeline = context.create_render_pipeline(gpu::RenderPipelineDesc {
 });
 ```
 
-### 4. Render Loop
+### 5. Render Loop with Uniform Binding
 
 ```rust
 fn render(&mut self) {
@@ -115,13 +144,12 @@ fn render(&mut self) {
         self.context.wait_for(sp, !0);
     }
 
-    // Acquire swapchain frame
     let frame = self.surface.acquire_frame();
-
-    // Start recording commands
     self.command_encoder.start();
 
-    // Begin render pass
+    // Prepare shader params with current color
+    let params = TriangleParams { color_tint: self.current_color };
+
     if let mut pass = self.command_encoder.render("triangle", gpu::RenderTargetSet {
         colors: &[gpu::RenderTarget {
             view: frame.texture_view(),
@@ -130,44 +158,58 @@ fn render(&mut self) {
         }],
         depth_stencil: None,
     }) {
-        // Bind pipeline and draw
         if let mut encoder = pass.with(&self.pipeline) {
-            encoder.draw(0, 3, 0, 1);  // 3 vertices, 1 instance
+            encoder.bind(0, &params);  // Bind uniforms at group 0
+            encoder.draw(0, 3, 0, 1);
         }
     }
 
-    // Present and submit
     self.command_encoder.present(frame);
     self.prev_sync_point = Some(self.context.submit(&mut self.command_encoder));
 }
 ```
 
-### 5. WGSL Shader (Hardcoded Vertices)
+### 6. WGSL Shader with Color Tint
 
 ```wgsl
-@vertex
-fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    // Positions defined in shader - no vertex buffer needed
-    var positions = array<vec2<f32>, 3>(
-        vec2<f32>(0.0, 0.5),    // top
-        vec2<f32>(-0.5, -0.5),  // bottom-left
-        vec2<f32>(0.5, -0.5),   // bottom-right
-    );
-    // ...
+struct Uniforms {
+    color_tint: vec4<f32>,
+}
+
+var<uniform> uniforms: Uniforms;
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    // Mix vertex color with tint based on tint alpha
+    let vertex_color = vec4<f32>(input.color, 1.0);
+    let tinted = mix(vertex_color.rgb, uniforms.color_tint.rgb, uniforms.color_tint.a);
+    return vec4<f32>(tinted, 1.0);
 }
 ```
+
+## Controls
+
+| Key | Color |
+|-----|-------|
+| 0 | Original (vertex colors) |
+| 1 | Red |
+| 2 | Green |
+| 3 | Blue |
+| 4 | Yellow |
+| 5 | Purple |
+
+**WASM**: Also has an HTML dropdown in the top-left corner.
 
 ## Expected Output
 
 A colored triangle with:
-- Red vertex at top
-- Green vertex at bottom-left
-- Blue vertex at bottom-right
+- Red vertex at top, Green at bottom-left, Blue at bottom-right
 - Colors interpolated across the face
+- Interactive color tinting via keyboard or dropdown
 
 ## Next Steps
 
 After understanding this example, explore:
-- **texture** - Adding textures and samplers
-- **mini** - Compute shaders (mipmap generation)
+- **webgpu-texture** - Adding textures and samplers
+- **webgpu-mandelbrot** - Compute shaders with interactivity
 - **bunnymark** - Vertex buffers, instancing, compute physics
