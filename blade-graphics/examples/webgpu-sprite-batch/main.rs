@@ -498,7 +498,7 @@ fn main() {
     #[allow(deprecated)]
     event_loop
         .run(move |event, target| {
-            target.set_control_flow(winit::event_loop::ControlFlow::Poll);
+            target.set_control_flow(winit::event_loop::ControlFlow::Wait);
             match event {
                 winit::event::Event::AboutToWait => {
                     if !*init_started_clone.borrow() {
