@@ -1,12 +1,18 @@
 //! WebGPU Mandelbrot Fractal Example
 //!
-//! Demonstrates compute shaders for fractal visualization.
+//! Demonstrates compute shaders for fractal visualization with interactive controls.
 //!
 //! Key patterns shown:
 //! - Compute shader writing to storage texture
 //! - Uniform buffer for fractal parameters
-//! - Animated zoom effect
+//! - Interactive zoom/pan with mouse
 //! - Compute → Render pipeline
+//!
+//! Controls:
+//! - Mouse scroll: Zoom in/out (centered on cursor)
+//! - Click and drag: Pan the view
+//! - R key: Reset to default view
+//! - Escape: Exit (native only)
 //!
 //! Run with: RUSTFLAGS="--cfg blade_wgpu" cargo run -p blade-graphics --example webgpu-mandelbrot
 //! For WASM: RUSTFLAGS="--cfg blade_wgpu" cargo run-wasm -p blade-graphics --example webgpu-mandelbrot
@@ -81,6 +87,11 @@ impl gpu::ShaderData for RenderData {
 
 const WORKGROUP_SIZE: u32 = 8;
 
+// Default view parameters
+const DEFAULT_CENTER_X: f64 = -0.5;
+const DEFAULT_CENTER_Y: f64 = 0.0;
+const DEFAULT_ZOOM: f64 = 1.0;
+
 struct Example {
     context: gpu::Context,
     surface: gpu::Surface,
@@ -92,13 +103,17 @@ struct Example {
     fractal_storage_view: gpu::TextureView,
     fractal_sample_view: gpu::TextureView,
     sampler: gpu::Sampler,
-    // Animation
-    #[cfg(not(target_arch = "wasm32"))]
-    start_time: std::time::Instant,
-    #[cfg(target_arch = "wasm32")]
-    frame_count: u32,
+    // Interactive view state (f64 for precision at high zoom)
+    center_x: f64,
+    center_y: f64,
+    zoom: f64,
+    // Mouse interaction state
+    is_dragging: bool,
+    last_mouse_pos: Option<(f64, f64)>,
+    // Rendering state
     prev_sync_point: Option<gpu::SyncPoint>,
     window_size: winit::dpi::PhysicalSize<u32>,
+    needs_redraw: bool,
 }
 
 impl Example {
@@ -230,13 +245,81 @@ impl Example {
             fractal_storage_view,
             fractal_sample_view,
             sampler,
-            #[cfg(not(target_arch = "wasm32"))]
-            start_time: std::time::Instant::now(),
-            #[cfg(target_arch = "wasm32")]
-            frame_count: 0,
+            center_x: DEFAULT_CENTER_X,
+            center_y: DEFAULT_CENTER_Y,
+            zoom: DEFAULT_ZOOM,
+            is_dragging: false,
+            last_mouse_pos: None,
             prev_sync_point: None,
             window_size,
+            needs_redraw: true,
         }
+    }
+
+    /// Reset view to default position
+    fn reset_view(&mut self) {
+        self.center_x = DEFAULT_CENTER_X;
+        self.center_y = DEFAULT_CENTER_Y;
+        self.zoom = DEFAULT_ZOOM;
+        self.needs_redraw = true;
+    }
+
+    /// Handle mouse scroll for zooming (centered on cursor position)
+    fn handle_scroll(&mut self, delta: f64, cursor_x: f64, cursor_y: f64) {
+        let zoom_factor = if delta > 0.0 { 1.1 } else { 1.0 / 1.1 };
+
+        // Convert cursor position to match shader coordinates
+        // Shader uses: px = (coord.x / dims.x - 0.5) * aspect, ranging [-0.5*aspect, 0.5*aspect]
+        //              py = coord.y / dims.y - 0.5, ranging [-0.5, 0.5]
+        //              c = px * (2.0/zoom) + center
+        let w = self.window_size.width as f64;
+        let h = self.window_size.height as f64;
+        let aspect = w / h;
+
+        // Match shader's px/py calculation
+        let px = (cursor_x / w - 0.5) * aspect;
+        let py = cursor_y / h - 0.5;
+
+        // Fractal coordinates under cursor (before zoom) - must match shader formula
+        // shader: c.x = px * (2.0/zoom) + center_x
+        let scale = 2.0 / self.zoom;
+        let fractal_x = px * scale + self.center_x;
+        let fractal_y = py * scale + self.center_y;
+
+        // Apply zoom
+        self.zoom *= zoom_factor;
+        self.zoom = self.zoom.clamp(0.1, 1e14); // Allow deep zoom with f64 precision
+
+        // Adjust center so the point under cursor stays fixed
+        // Solve: fractal_x = px * (2.0/new_zoom) + new_center_x
+        // => new_center_x = fractal_x - px * (2.0/new_zoom)
+        let new_scale = 2.0 / self.zoom;
+        self.center_x = fractal_x - px * new_scale;
+        self.center_y = fractal_y - py * new_scale;
+
+        self.needs_redraw = true;
+    }
+
+    /// Handle mouse drag for panning
+    fn handle_drag(&mut self, new_x: f64, new_y: f64) {
+        if let Some((last_x, last_y)) = self.last_mouse_pos {
+            let w = self.window_size.width as f64;
+            let h = self.window_size.height as f64;
+            let aspect = w / h;
+
+            // Convert pixel delta to fractal coordinate delta
+            // Shader: c.x = px * (2.0/zoom) + center_x
+            // px delta for 1 pixel: aspect / w
+            // fractal delta: (aspect / w) * (2.0/zoom) = 2.0 * aspect / (w * zoom)
+            let scale = 2.0 / self.zoom;
+            let dx = (new_x - last_x) / w * aspect * scale;
+            let dy = (new_y - last_y) / h * scale;
+
+            self.center_x -= dx;
+            self.center_y -= dy; // No flip - shader y increases downward
+            self.needs_redraw = true;
+        }
+        self.last_mouse_pos = Some((new_x, new_y));
     }
 
     fn create_fractal_texture(
@@ -311,30 +394,20 @@ impl Example {
             self.context.wait_for(sp, !0);
         }
 
-        // Calculate time for animation
-        #[cfg(not(target_arch = "wasm32"))]
-        let time = self.start_time.elapsed().as_secs_f32();
-        #[cfg(target_arch = "wasm32")]
-        let time = {
-            self.frame_count += 1;
-            self.frame_count as f32 / 60.0
-        };
+        // Dynamically adjust max iterations based on zoom level
+        // Higher zoom = more detail needed = more iterations
+        let max_iterations = (256.0 + self.zoom.log2().max(0.0) * 50.0).min(2048.0) as u32;
 
-        // Animated zoom into an interesting region
-        let zoom_speed = 0.15;
-        let base_zoom = 0.5;
-        let zoom = base_zoom * (1.0 + time * zoom_speed).powf(2.0);
-
-        // Target a visually interesting point
-        let target_x = -0.743643887037151;
-        let target_y = 0.131825904205330;
-
+        // Pass current view state to shader
+        // Note: f32 precision limits deep zoom - at zoom > ~1e6, detail is lost
         let params = ComputeParams {
-            center_x: target_x as f32,
-            center_y: target_y as f32,
-            zoom: zoom.min(1000.0), // Cap zoom to avoid precision issues
-            max_iterations: 256,
+            center_x: self.center_x as f32,
+            center_y: self.center_y as f32,
+            zoom: self.zoom as f32,
+            max_iterations,
         };
+
+        self.needs_redraw = false;
 
         let frame = self.surface.acquire_frame();
         self.command_encoder.start();
@@ -412,18 +485,53 @@ fn main() {
     let window = event_loop.create_window(window_attributes).unwrap();
 
     let mut example = Example::new(&window);
+    let mut cursor_pos = (0.0, 0.0);
 
     #[allow(deprecated)]
     event_loop
         .run(|event, target| {
-            target.set_control_flow(winit::event_loop::ControlFlow::Poll);
+            // Use Wait - only redraw when needed (on input or resize)
+            target.set_control_flow(winit::event_loop::ControlFlow::Wait);
             match event {
                 winit::event::Event::AboutToWait => {
-                    window.request_redraw();
+                    if example.needs_redraw {
+                        window.request_redraw();
+                    }
                 }
                 winit::event::Event::WindowEvent { event, .. } => match event {
                     winit::event::WindowEvent::Resized(size) => {
                         example.resize(size);
+                        example.needs_redraw = true;
+                        window.request_redraw();
+                    }
+                    winit::event::WindowEvent::CursorMoved { position, .. } => {
+                        cursor_pos = (position.x, position.y);
+                        if example.is_dragging {
+                            example.handle_drag(position.x, position.y);
+                            window.request_redraw();
+                        }
+                    }
+                    winit::event::WindowEvent::MouseWheel { delta, .. } => {
+                        let scroll_delta = match delta {
+                            winit::event::MouseScrollDelta::LineDelta(_, y) => y as f64,
+                            winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y / 50.0,
+                        };
+                        example.handle_scroll(scroll_delta, cursor_pos.0, cursor_pos.1);
+                        window.request_redraw();
+                    }
+                    winit::event::WindowEvent::MouseInput { state, button, .. } => {
+                        if button == winit::event::MouseButton::Left {
+                            match state {
+                                winit::event::ElementState::Pressed => {
+                                    example.is_dragging = true;
+                                    example.last_mouse_pos = Some(cursor_pos);
+                                }
+                                winit::event::ElementState::Released => {
+                                    example.is_dragging = false;
+                                    example.last_mouse_pos = None;
+                                }
+                            }
+                        }
                     }
                     winit::event::WindowEvent::KeyboardInput {
                         event:
@@ -434,8 +542,14 @@ fn main() {
                             },
                         ..
                     } => {
-                        if key_code == winit::keyboard::KeyCode::Escape {
-                            target.exit();
+                        use winit::keyboard::KeyCode;
+                        match key_code {
+                            KeyCode::Escape => target.exit(),
+                            KeyCode::KeyR => {
+                                example.reset_view();
+                                window.request_redraw();
+                            }
+                            _ => {}
                         }
                     }
                     winit::event::WindowEvent::CloseRequested => {
@@ -482,6 +596,7 @@ fn main() {
 
     let example: Rc<RefCell<Option<Example>>> = Rc::new(RefCell::new(None));
     let init_started: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
+    let cursor_pos: Rc<RefCell<(f64, f64)>> = Rc::new(RefCell::new((0.0, 0.0)));
 
     let example_clone = example.clone();
     let init_started_clone = init_started.clone();
@@ -490,6 +605,7 @@ fn main() {
     #[allow(deprecated)]
     event_loop
         .run(move |event, target| {
+            // Use Wait - browser handles timing via requestAnimationFrame
             target.set_control_flow(winit::event_loop::ControlFlow::Wait);
             match event {
                 winit::event::Event::AboutToWait => {
@@ -500,15 +616,69 @@ fn main() {
                         wasm_bindgen_futures::spawn_local(async move {
                             let ex = Example::new_async(&window_init).await;
                             *example_init.borrow_mut() = Some(ex);
-                            log::info!("Mandelbrot initialized!");
+                            log::info!("Mandelbrot initialized! Use mouse to zoom/pan, R to reset.");
+                            window_init.request_redraw();
                         });
                     }
-                    window.request_redraw();
                 }
                 winit::event::Event::WindowEvent { event, .. } => match event {
                     winit::event::WindowEvent::Resized(size) => {
                         if let Some(ref mut ex) = *example.borrow_mut() {
                             ex.resize(size);
+                            ex.needs_redraw = true;
+                            window.request_redraw();
+                        }
+                    }
+                    winit::event::WindowEvent::CursorMoved { position, .. } => {
+                        *cursor_pos.borrow_mut() = (position.x, position.y);
+                        if let Some(ref mut ex) = *example.borrow_mut() {
+                            if ex.is_dragging {
+                                ex.handle_drag(position.x, position.y);
+                                window.request_redraw();
+                            }
+                        }
+                    }
+                    winit::event::WindowEvent::MouseWheel { delta, .. } => {
+                        let scroll_delta = match delta {
+                            winit::event::MouseScrollDelta::LineDelta(_, y) => y as f64,
+                            winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y / 50.0,
+                        };
+                        let pos = *cursor_pos.borrow();
+                        if let Some(ref mut ex) = *example.borrow_mut() {
+                            ex.handle_scroll(scroll_delta, pos.0, pos.1);
+                            window.request_redraw();
+                        }
+                    }
+                    winit::event::WindowEvent::MouseInput { state, button, .. } => {
+                        if button == winit::event::MouseButton::Left {
+                            if let Some(ref mut ex) = *example.borrow_mut() {
+                                match state {
+                                    winit::event::ElementState::Pressed => {
+                                        ex.is_dragging = true;
+                                        ex.last_mouse_pos = Some(*cursor_pos.borrow());
+                                    }
+                                    winit::event::ElementState::Released => {
+                                        ex.is_dragging = false;
+                                        ex.last_mouse_pos = None;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    winit::event::WindowEvent::KeyboardInput {
+                        event:
+                            winit::event::KeyEvent {
+                                physical_key: winit::keyboard::PhysicalKey::Code(key_code),
+                                state: winit::event::ElementState::Pressed,
+                                ..
+                            },
+                        ..
+                    } => {
+                        if key_code == winit::keyboard::KeyCode::KeyR {
+                            if let Some(ref mut ex) = *example.borrow_mut() {
+                                ex.reset_view();
+                                window.request_redraw();
+                            }
                         }
                     }
                     winit::event::WindowEvent::CloseRequested => {

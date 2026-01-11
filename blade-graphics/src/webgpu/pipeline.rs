@@ -265,10 +265,11 @@ impl Context {
             .zip(info.binding_access.iter())
             .enumerate()
             .map(|(binding_index, (&(_, binding), &access))| {
+                let ty = map_binding_type(binding, access);
                 wgpu::BindGroupLayoutEntry {
                     binding: binding_index as u32,
                     visibility,
-                    ty: map_binding_type(binding, access),
+                    ty,
                     count: match binding {
                         crate::ShaderBinding::TextureArray { count } |
                         crate::ShaderBinding::BufferArray { count } => {

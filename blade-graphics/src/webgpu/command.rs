@@ -1103,31 +1103,20 @@ impl<'a> ExecutionState<'a> {
             let plain_data_buffer = self.plain_data_buffer;
 
             if has_plain_data {
-                // Use dynamic offsets for PlainData - allows caching across different offsets
-                // Cache key uses PlainDataDynamic (excludes offset, includes buffer_index)
-                let cache_key = BindGroupCacheKey::new(
-                    PipelineKey::Compute(pipeline_key),
-                    group_index,
-                    deduped.iter().map(|e| self.entry_to_binding_dynamic(e)),
-                );
-
-                // Collect dynamic offsets for PlainData entries (in binding order)
+                // Create fresh bind group every time for dynamic uniforms
                 let dynamic_offsets = collect_dynamic_offsets(&deduped);
 
-                let bind_group = self.cache.get_or_create(cache_key, || {
-                    // Create bind group with offset=0 for PlainData entries
-                    let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped.iter()
-                        .filter_map(|entry| make_bind_group_entry_dynamic(entry, hub, plain_data_buffer))
-                        .collect();
+                let wgpu_entries: Vec<wgpu::BindGroupEntry> = deduped.iter()
+                    .filter_map(|entry| make_bind_group_entry_dynamic(entry, hub, plain_data_buffer))
+                    .collect();
 
-                    device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("Dynamic Offset Compute BindGroup"),
-                        layout,
-                        entries: &wgpu_entries,
-                    })
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Fresh Compute BindGroup (no cache)"),
+                    layout,
+                    entries: &wgpu_entries,
                 });
 
-                compute_pass.set_bind_group(group_index, bind_group, &dynamic_offsets);
+                compute_pass.set_bind_group(group_index, &bind_group, &dynamic_offsets);
             } else {
                 // Build cache key from deduped entries
                 let cache_key = BindGroupCacheKey::new(

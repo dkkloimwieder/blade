@@ -157,7 +157,15 @@ impl super::Shader {
                 if let Some(info) = sd_infos.get_mut(group_index) {
                     info.visibility |= naga_stage.into();
                     if let Some(access) = info.binding_access.get_mut(binding_index) {
-                        *access |= var_access;
+                        // For storage textures, access is in ImageClass, not AddressSpace
+                        let effective_access = match module.types[var.ty].inner {
+                            naga::TypeInner::Image {
+                                class: naga::ImageClass::Storage { access, .. },
+                                ..
+                            } => access,
+                            _ => var_access,
+                        };
+                        *access |= effective_access;
                     }
                 }
                 continue;
