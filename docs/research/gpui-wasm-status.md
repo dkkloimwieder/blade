@@ -1,14 +1,14 @@
 # GPUI WASM Migration Status
 
-*Last updated: 2026-01-11*
+*Last updated: 2026-01-12*
 
 ## Overview
 
 Goal: Run GPUI-based UI in the browser using Blade's WebGPU backend.
 
-## Current Status: COMPILES
+## Current Status: WEB PLATFORM IMPLEMENTED
 
-gpui-ce now compiles for `wasm32-unknown-unknown`! The dependency issues have been resolved and the library structure is in place. Next step is implementing the actual WebPlatform functionality.
+gpui-ce now compiles for `wasm32-unknown-unknown` with a functional web platform implementation! The core platform traits are implemented - next step is connecting to blade-graphics WebGPU and adding full browser event handling.
 
 ## Completed Work
 
@@ -53,6 +53,25 @@ gpui-ce now compiles for `wasm32-unknown-unknown`! The dependency issues have be
 - Executor realtime priority disabled on WASM (single-threaded)
 - `PlatformScreenCaptureFrame` stub for WASM
 
+### 7. Web Platform Module (blade-lzpj) ✅
+- `platform/web/window.rs` - `WebWindow` implementing `PlatformWindow` trait
+  - Canvas-based window management with bounds tracking
+  - Callback registration for resize, input, active status, etc.
+  - `raw_window_handle` implementation for WebGPU surface creation
+  - Device pixel ratio detection from browser
+- `platform/web/dispatcher.rs` - `WebDispatcher` implementing `PlatformDispatcher`
+  - Task queue for main thread execution
+  - `dispatch_after` using `setTimeout` via wasm-bindgen
+  - Single-threaded execution model for WASM
+- `platform/web/atlas.rs` - `WebAtlas` implementing `PlatformAtlas`
+  - Simple texture atlas for sprite management
+  - HashMap-based tile caching
+- `platform/web/platform.rs` - `WebPlatform` implementing `Platform` trait
+  - Window creation and management
+  - Display bounds from browser viewport
+  - Cursor style, clipboard (stubs for now)
+  - Prefers-color-scheme detection for dark mode
+
 ## Build Commands
 
 ```bash
@@ -90,22 +109,28 @@ cargo check -p gpui-ce --no-default-features
 
 ## Next Steps
 
-### 1. blade-lzpj: Implement WebPlatform
-- Canvas-based window management
-- Browser event handling (keyboard, mouse, touch)
-- requestAnimationFrame render loop
-- Clipboard integration via web-sys
+### 1. Connect to blade-graphics WebGPU
+- Initialize WebGPU context from canvas element
+- Create rendering surface using `Context::create_surface_from_canvas`
+- Hook up BladeRenderer for Scene rendering
+- Integrate with WebWindow draw() callback
 
-### 2. Connect to blade-graphics WebGPU
-- Initialize WebGPU context from canvas
-- Create rendering surface
-- Hook up Scene rendering
+### 2. Browser Event Handling
+- Mouse events (click, move, wheel) via web-sys EventListener
+- Keyboard events (keydown, keyup, input)
+- Touch events for mobile support
+- requestAnimationFrame render loop integration
 
 ### 3. Text Rendering
 - Embed fonts in WASM binary
 - Initialize cosmic-text with embedded fonts
+- Replace NoopTextSystem with real text rendering
 
-### 4. HTTP Image Loading (Optional)
+### 4. Clipboard Integration
+- Use navigator.clipboard API via web-sys
+- Async read/write with Promises
+
+### 5. HTTP Image Loading (Optional)
 - Implement fetch-based image loading using web-sys
 - Convert Response to image bytes
 
@@ -130,7 +155,10 @@ cargo check -p gpui-ce --no-default-features
 ## Key Files
 
 - `vendor/gpui-ce/` - gpui-ce submodule
-- `vendor/gpui-ce/src/platform/web/` - WASM platform stubs
+- `vendor/gpui-ce/src/platform/web/` - WASM platform implementation
+  - `platform.rs` - WebPlatform, WebDisplay, WebKeyboardLayout
+  - `window.rs` - WebWindow, WebAtlas
+  - `dispatcher.rs` - WebDispatcher for task scheduling
 - `vendor/gpui-ce/Cargo.toml` - wasm feature flag, dependencies
 - `vendor/gpui-ce/src/http_stubs.rs` - HTTP client stubs for WASM
 - `vendor/gpui-util-wasm/` - WASM-compatible util library
@@ -143,4 +171,4 @@ cargo check -p gpui-ce --no-default-features
 - blade-fdp1: Fork + platform target (closed)
 - blade-t86a: Cargo.toml config (closed)
 - blade-nd1t: Fork gpui_util (closed)
-- blade-lzpj: Web platform module (ready to start)
+- blade-lzpj: Web platform module (in progress)
