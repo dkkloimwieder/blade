@@ -6,9 +6,9 @@
 
 Goal: Run GPUI-based UI in the browser using Blade's WebGPU backend.
 
-## Current Status: BLOCKED
+## Current Status: COMPILES
 
-Blocked on dependency issues. Core infrastructure is in place but doesn't compile yet.
+gpui-ce now compiles for `wasm32-unknown-unknown`! The dependency issues have been resolved and the library structure is in place. Next step is implementing the actual WebPlatform functionality.
 
 ## Completed Work
 
@@ -27,77 +27,87 @@ Blocked on dependency issues. Core infrastructure is in place but doesn't compil
 - Stub `WebPlatform` implementation
 - Added `#[cfg(target_arch = "wasm32")]` conditionals
 
-### 4. Cargo.toml WASM Config (blade-t86a) ✅ (partial)
+### 4. Cargo.toml WASM Config (blade-t86a) ✅
 - Added `wasm` feature flag
 - Added wasm-bindgen, web-sys, js-sys dependencies
 - Moved libc, num_cpus, smol to native-only section
+- Added getrandom 0.3 with wasm_js feature for rand 0.9 compatibility
+- Added uuid with js feature for WASM randomness
 
-## Blocking Issues
+### 5. gpui_util_wasm Crate (blade-nd1t) ✅
+- Created `vendor/gpui-util-wasm/` - WASM-compatible utility library
+- Compiles for both native and wasm32-unknown-unknown
+- Contains all required types:
+  - `ArcCow` with full trait implementations (PartialOrd, Ord, etc.)
+  - `ResultExt`, `TryFutureExt` traits for error logging
+  - `Deferred`, `defer()` for deferred execution
+  - `post_inc`, `measure`, `debug_panic!` utilities
+  - HTTP stubs (`Uri`, `StatusCode`, `HeaderValue`, `HttpClient`)
+  - Path, serde, size, time utilities
 
-### Primary Blocker: gpui_util depends on smol
+### 6. gpui-ce WASM Compatibility ✅
+- Conditional imports for `util` crate (`crate::util::` pattern)
+- http_client moved to native-only dependencies
+- HTTP image loading gated behind cfg(not(wasm32)) - returns error on WASM
+- Platform-specific types (SmolTimer, FutureExt) gated
+- Executor realtime priority disabled on WASM (single-threaded)
+- `PlatformScreenCaptureFrame` stub for WASM
 
-```
-errno (compile error on wasm32)
-└── signal-hook-registry
-    └── async-signal
-        └── async-process
-            └── smol
-                └── gpui_util (crates.io)
-                    └── gpui-ce
-```
+## Build Commands
 
-**Issue**: blade-nd1t
+```bash
+# Build for WASM
+cargo check -p gpui-ce --no-default-features --features wasm --target wasm32-unknown-unknown
 
-**Progress**:
-- Created `vendor/gpui-util-wasm/` - minimal WASM-compatible subset ✅
-- Compiles for both native and wasm32-unknown-unknown ✅
-- Contains: `ArcCow`, `ResultExt`, `post_inc`, path/serde/size/time utils
+# Build for native (without wayland/x11)
+cargo check -p gpui-ce --no-default-features
 
-**Remaining work**:
-- Modify gpui-ce's `src/util.rs` to conditionally use gpui_util_wasm on WASM
-- Add missing exports: `Deferred`, `FutureExt`, `TryFutureExt`
-
-**Key insight**: `agnostic_async_executor` can replace smol for WASM-compatible async.
-
-### Secondary: gpui_http_client tar support
-
-```
-async-std
-└── zed-async-tar
-    └── gpui_http_client
+# Note: default features (wayland, x11) have pre-existing ashpd dependency issue
 ```
 
-**Solution**: Make tar/archive features optional. HTTP itself works fine on WASM (reqwest auto-switches to fetch API).
+## Known Limitations (WASM)
+
+1. **HTTP Image Loading**: Not implemented yet. URLs return an error. Use embedded resources instead.
+2. **Screen Capture**: Not supported (stub type `()`).
+3. **Realtime Priority**: Disabled (WASM is single-threaded).
+4. **Timer**: `smol::Timer` not available - need alternative timer implementation.
+5. **Filesystem**: No filesystem access on WASM.
 
 ## Dependency Compatibility
 
 | Dependency | WASM Status | Notes |
 |------------|-------------|-------|
 | blade-graphics | ✅ Works | WebGPU backend exists |
-| reqwest | ✅ Works | Auto-uses fetch on wasm32 |
 | cosmic-text | ✅ Works | Needs embedded fonts |
 | taffy (layout) | ✅ Works | Pure Rust |
 | lyon (vector) | ✅ Works | Pure Rust |
-| smol | ❌ Blocked | Use agnostic_async_executor |
-| async-std | ❌ Blocked | Make optional |
-| libc | ❌ N/A | Already excluded |
-| num_cpus | ❌ N/A | Already excluded |
+| rand | ✅ Works | getrandom 0.3 with wasm_js |
+| uuid | ✅ Works | js feature enabled |
+| gpui_util | ⚠️ Native only | gpui_util_wasm provides WASM subset |
+| http_client | ⚠️ Native only | Stubs provided for WASM |
+| smol | ❌ Native only | Excluded from WASM build |
+| libc, num_cpus | ❌ Native only | Excluded from WASM build |
 
 ## Next Steps
 
-1. **blade-nd1t**: Fork gpui_util
-   - Replace smol with agnostic_async_executor
-   - Make fs/command/shell_env features optional (don't work on WASM)
-   - Publish as gpui_util_wasm or patch in Cargo.toml
+### 1. blade-lzpj: Implement WebPlatform
+- Canvas-based window management
+- Browser event handling (keyboard, mouse, touch)
+- requestAnimationFrame render loop
+- Clipboard integration via web-sys
 
-2. **blade-t86a**: Update Cargo.toml to use forked gpui_util
+### 2. Connect to blade-graphics WebGPU
+- Initialize WebGPU context from canvas
+- Create rendering surface
+- Hook up Scene rendering
 
-3. **blade-lzpj**: Implement WebPlatform properly
-   - Canvas-based window
-   - Browser event handling
-   - requestAnimationFrame loop
+### 3. Text Rendering
+- Embed fonts in WASM binary
+- Initialize cosmic-text with embedded fonts
 
-4. Connect to blade-graphics WebGPU backend
+### 4. HTTP Image Loading (Optional)
+- Implement fetch-based image loading using web-sys
+- Convert Response to image bytes
 
 ## Architecture
 
@@ -107,6 +117,7 @@ async-std
 ├─────────────────────────────────────────────┤
 │  gpui-ce (WASM build)                       │
 │  ├── platform/web/     ← WebPlatform impl   │
+│  ├── gpui_util_wasm    ← WASM utilities     │
 │  ├── cosmic-text       ← embedded fonts     │
 │  └── blade-graphics    ← WebGPU backend     │
 ├─────────────────────────────────────────────┤
@@ -120,15 +131,16 @@ async-std
 
 - `vendor/gpui-ce/` - gpui-ce submodule
 - `vendor/gpui-ce/src/platform/web/` - WASM platform stubs
-- `vendor/gpui-ce/Cargo.toml` - wasm feature flag
-- `vendor/gpui-util-wasm/` - WASM-compatible util subset
+- `vendor/gpui-ce/Cargo.toml` - wasm feature flag, dependencies
+- `vendor/gpui-ce/src/http_stubs.rs` - HTTP client stubs for WASM
+- `vendor/gpui-util-wasm/` - WASM-compatible util library
 - `blade-graphics/src/webgpu/` - WebGPU backend (working)
-- `docs/research/gpui-wasm-feasibility.md` - Initial research
+- `.cargo/config.toml` - getrandom wasm_js backend config
 
 ## Related Issues
 
 - blade-7maq: Research (closed)
 - blade-fdp1: Fork + platform target (closed)
-- blade-t86a: Cargo.toml config (closed, partial)
-- blade-nd1t: Fork gpui_util (open, blocking)
-- blade-lzpj: Web platform module (blocked)
+- blade-t86a: Cargo.toml config (closed)
+- blade-nd1t: Fork gpui_util (closed)
+- blade-lzpj: Web platform module (ready to start)

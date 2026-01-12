@@ -52,6 +52,18 @@ impl<T: ?Sized + PartialEq> PartialEq for ArcCow<'_, T> {
 
 impl<T: ?Sized + Eq> Eq for ArcCow<'_, T> {}
 
+impl<T: ?Sized + PartialOrd> PartialOrd for ArcCow<'_, T> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.deref().partial_cmp(other.deref())
+    }
+}
+
+impl<T: ?Sized + Ord> Ord for ArcCow<'_, T> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.deref().cmp(other.deref())
+    }
+}
+
 impl<T: ?Sized + Hash> Hash for ArcCow<'_, T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.deref().hash(state)

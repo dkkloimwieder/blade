@@ -4,3 +4,5 @@ run-wasm-debug = "run --package run-wasm-debug --"
 
 [target.wasm32-unknown-unknown]
 runner = "wasm-server-runner"
+# Enable getrandom 0.3 wasm_js backend
+rustflags = ["--cfg", "getrandom_backend=\"wasm_js\""]
