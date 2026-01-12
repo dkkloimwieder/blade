@@ -50,6 +50,16 @@ wasm-bindgen target/wasm32-unknown-unknown/release/gpui_web.wasm \
 3. Open http://localhost:8080 in a WebGPU-enabled browser
 4. Open DevTools console to see log messages
 
+## What You'll See
+
+When working correctly:
+1. **Black screen** - The canvas clears to black (WebGPU working!)
+2. **Click to cycle colors** - Click on the canvas to cycle through black, white, and transparent
+3. **Console logging** - Check browser DevTools console for:
+   - Mouse position logs (every 50 pixels)
+   - Key press logs (click canvas first to focus)
+   - Click position and color index
+
 ## Development Status
 
 This is the entry point for GPUI WASM. Current status:
@@ -57,9 +67,9 @@ This is the entry point for GPUI WASM. Current status:
 - [x] WASM module loads
 - [x] Canvas element acquired
 - [x] Logging to console
-- [ ] WebRenderer initialization (blade-1wbn)
-- [ ] Event listeners (blade-1wbn)
-- [ ] Animation loop (blade-1wbn)
+- [x] WebRenderer initialization
+- [x] Event listeners (mouse, keyboard)
+- [x] Animation loop
 - [ ] Scene rendering (blade-91hg)
 - [ ] GPUI component demo (blade-8lxc)
 

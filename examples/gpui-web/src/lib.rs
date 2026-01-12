@@ -17,6 +17,7 @@ pub const CANVAS_ID: &str = DEFAULT_CANVAS_ID;
 /// Global renderer state (single-threaded WASM)
 thread_local! {
     static RENDERER: RefCell<Option<WebRenderer>> = const { RefCell::new(None) };
+    static CLICK_COUNT: RefCell<u32> = const { RefCell::new(0) };
 }
 
 /// Initialize the GPUI web application
@@ -104,11 +105,64 @@ async fn init_async(canvas: web_sys::HtmlCanvasElement, dpr: f64) -> Result<(), 
         *r.borrow_mut() = Some(renderer);
     });
 
+    // Set up event listeners for testing
+    setup_test_events(&canvas)?;
+    log::info!("Event listeners attached");
+
     // Start the render loop
     start_render_loop();
 
     log::info!("Render loop started");
-    update_status("Running");
+    update_status("Running - click canvas to cycle colors, check console for events");
+
+    Ok(())
+}
+
+/// Set up simple event listeners for testing
+fn setup_test_events(canvas: &web_sys::HtmlCanvasElement) -> Result<(), JsValue> {
+    // Make canvas focusable for keyboard events
+    canvas.set_tab_index(0);
+
+    // Mouse click - cycle colors and log
+    let canvas_click = canvas.clone();
+    let onclick = Closure::<dyn FnMut(_)>::new(move |event: web_sys::MouseEvent| {
+        let x = event.offset_x();
+        let y = event.offset_y();
+        let click_count = CLICK_COUNT.with(|c| {
+            let mut count = c.borrow_mut();
+            *count = (*count + 1) % 4;
+            *count
+        });
+        log::info!("Click at ({}, {}), color index: {}", x, y, click_count);
+
+        // Focus canvas for keyboard events
+        if let Ok(element) = canvas_click.clone().dyn_into::<web_sys::HtmlElement>() {
+            let _ = element.focus();
+        }
+    });
+    canvas.add_event_listener_with_callback("click", onclick.as_ref().unchecked_ref())?;
+    onclick.forget();
+
+    // Mouse move - log position
+    let onmousemove = Closure::<dyn FnMut(_)>::new(move |event: web_sys::MouseEvent| {
+        let x = event.offset_x();
+        let y = event.offset_y();
+        // Only log occasionally to avoid console spam
+        if (x + y) % 50 == 0 {
+            log::debug!("Mouse at ({}, {})", x, y);
+        }
+    });
+    canvas.add_event_listener_with_callback("mousemove", onmousemove.as_ref().unchecked_ref())?;
+    onmousemove.forget();
+
+    // Key down - log key presses
+    let onkeydown = Closure::<dyn FnMut(_)>::new(move |event: web_sys::KeyboardEvent| {
+        let key = event.key();
+        let code = event.code();
+        log::info!("Key down: '{}' (code: {})", key, code);
+    });
+    canvas.add_event_listener_with_callback("keydown", onkeydown.as_ref().unchecked_ref())?;
+    onkeydown.forget();
 
     Ok(())
 }
@@ -120,10 +174,13 @@ fn start_render_loop() {
     let g = f.clone();
 
     *g.borrow_mut() = Some(Closure::new(move || {
-        // Render a frame - clear to black
+        // Get current color index from click count
+        let color_index = CLICK_COUNT.with(|c| *c.borrow());
+
+        // Render a frame - clear to color based on click count
         RENDERER.with(|r| {
             if let Some(ref renderer) = *r.borrow() {
-                renderer.clear();
+                renderer.clear_with_index(color_index);
             }
         });
 
