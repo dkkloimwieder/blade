@@ -55,40 +55,34 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let py = f32(coord.y) / f32(dims.y) - 0.5;
 
     // Scale by zoom and offset by center
-    // Higher zoom = smaller region = more detail
-    let scale = 2.0 / params.zoom;  // At zoom=1, we see range of 2 units
     let c = vec2<f32>(
-        px * scale + params.center_x,
-        py * scale + params.center_y
+        px * 2.0 / params.zoom + params.center_x,
+        py * 2.0 / params.zoom + params.center_y
     );
 
     // Mandelbrot iteration
     var z = vec2<f32>(0.0, 0.0);
-    var iteration: u32 = 0u;
-    let max_iter = 256u;
+    var escape_iter: u32 = params.max_iterations;
 
-    for (var i: u32 = 0u; i < max_iter; i++) {
-        let z_new = vec2<f32>(
-            z.x * z.x - z.y * z.y + c.x,
-            2.0 * z.x * z.y + c.y
-        );
-        z = z_new;
-
+    for (var i: u32 = 0u; i < params.max_iterations; i++) {
+        z = vec2<f32>(z.x*z.x - z.y*z.y + c.x, 2.0*z.x*z.y + c.y);
         if (dot(z, z) > 4.0) {
+            escape_iter = i;
             break;
         }
-        iteration++;
     }
 
-    // Color based on iteration count
-    var color: vec3<f32>;
-    if (iteration == max_iter) {
-        color = vec3<f32>(0.0, 0.0, 0.0);
+    // Color based on escape iteration
+    var color: vec4<f32>;
+    if (escape_iter == params.max_iterations) {
+        // Never escaped - in the Mandelbrot set - black
+        color = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     } else {
-        let t = f32(iteration) / f32(max_iter);
-        let hue = t * 3.0 % 1.0;
-        color = hsv_to_rgb(hue, 0.8, 1.0 - t * 0.3);
+        // Escaped - color cycles every ~50 iterations
+        let hue = fract(f32(escape_iter) * 0.02);
+        let rgb = hsv_to_rgb(hue, 0.85, 1.0);
+        color = vec4<f32>(rgb, 1.0);
     }
 
-    textureStore(output_tex, coord, vec4<f32>(color, 1.0));
+    textureStore(output_tex, coord, color);
 }

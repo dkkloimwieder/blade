@@ -11,6 +11,8 @@
 //! Controls:
 //! - Mouse scroll: Zoom in/out (centered on cursor)
 //! - Click and drag: Pan the view
+//! - I key: Double iteration count (more detail, slower)
+//! - U key: Halve iteration count (less detail, faster)
 //! - R key: Reset to default view
 //! - Escape: Exit (native only)
 //!
@@ -114,6 +116,8 @@ struct Example {
     prev_sync_point: Option<gpu::SyncPoint>,
     window_size: winit::dpi::PhysicalSize<u32>,
     needs_redraw: bool,
+    // Manual iteration control
+    iteration_multiplier: f64,
 }
 
 impl Example {
@@ -253,6 +257,7 @@ impl Example {
             prev_sync_point: None,
             window_size,
             needs_redraw: true,
+            iteration_multiplier: 1.0,
         }
     }
 
@@ -261,6 +266,17 @@ impl Example {
         self.center_x = DEFAULT_CENTER_X;
         self.center_y = DEFAULT_CENTER_Y;
         self.zoom = DEFAULT_ZOOM;
+        self.iteration_multiplier = 1.0;
+        self.needs_redraw = true;
+    }
+
+    /// Adjust iteration multiplier (I to double, U to halve)
+    fn adjust_iterations(&mut self, increase: bool) {
+        if increase {
+            self.iteration_multiplier *= 2.0;
+        } else {
+            self.iteration_multiplier = (self.iteration_multiplier / 2.0).max(0.25);
+        }
         self.needs_redraw = true;
     }
 
@@ -396,7 +412,15 @@ impl Example {
 
         // Dynamically adjust max iterations based on zoom level
         // Higher zoom = more detail needed = more iterations
-        let max_iterations = (256.0 + self.zoom.log2().max(0.0) * 50.0).min(2048.0) as u32;
+        // Use quadratic scaling: base + zoom_factor^1.5 for faster iteration growth
+        let base_iterations = 500.0 + self.zoom.log2().max(0.0).powf(1.5) * 200.0;
+        let max_iterations = ((base_iterations * self.iteration_multiplier).min(50000.0)) as u32;
+
+        // Log current state
+        #[cfg(target_arch = "wasm32")]
+        log::info!("Zoom: {:.2}x | Iterations: {} | Multiplier: {:.2}x", self.zoom, max_iterations, self.iteration_multiplier);
+        #[cfg(not(target_arch = "wasm32"))]
+        println!("Zoom: {:.2}x | Iterations: {} | Multiplier: {:.2}x", self.zoom, max_iterations, self.iteration_multiplier);
 
         // Pass current view state to shader
         // Note: f32 precision limits deep zoom - at zoom > ~1e6, detail is lost
@@ -549,6 +573,14 @@ fn main() {
                                 example.reset_view();
                                 window.request_redraw();
                             }
+                            KeyCode::KeyI => {
+                                example.adjust_iterations(true);
+                                window.request_redraw();
+                            }
+                            KeyCode::KeyU => {
+                                example.adjust_iterations(false);
+                                window.request_redraw();
+                            }
                             _ => {}
                         }
                     }
@@ -674,10 +706,22 @@ fn main() {
                             },
                         ..
                     } => {
-                        if key_code == winit::keyboard::KeyCode::KeyR {
-                            if let Some(ref mut ex) = *example.borrow_mut() {
-                                ex.reset_view();
-                                window.request_redraw();
+                        use winit::keyboard::KeyCode;
+                        if let Some(ref mut ex) = *example.borrow_mut() {
+                            match key_code {
+                                KeyCode::KeyR => {
+                                    ex.reset_view();
+                                    window.request_redraw();
+                                }
+                                KeyCode::KeyI => {
+                                    ex.adjust_iterations(true);
+                                    window.request_redraw();
+                                }
+                                KeyCode::KeyU => {
+                                    ex.adjust_iterations(false);
+                                    window.request_redraw();
+                                }
+                                _ => {}
                             }
                         }
                     }

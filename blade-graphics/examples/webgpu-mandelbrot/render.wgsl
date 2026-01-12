@@ -5,7 +5,9 @@ struct VertexOutput {
     @location(0) uv: vec2<f32>,
 }
 
+@group(0) @binding(0)
 var fractal_texture: texture_2d<f32>;
+@group(0) @binding(1)
 var fractal_sampler: sampler;
 
 @vertex
