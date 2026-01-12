@@ -155,11 +155,23 @@ impl Context {
         surface.config.height = config.size.height;
         // Keep the format that was detected as supported during surface creation
         // Don't override: Firefox WebGPU doesn't support bgra8unorm-srgb
-        surface.config.present_mode = match config.display_sync {
-            crate::DisplaySync::Block => wgpu::PresentMode::Fifo,
-            crate::DisplaySync::Recent => wgpu::PresentMode::Mailbox,
-            crate::DisplaySync::Tear => wgpu::PresentMode::Immediate,
-        };
+        // On WASM, only FIFO and Auto* present modes are supported
+        #[cfg(target_arch = "wasm32")]
+        {
+            surface.config.present_mode = match config.display_sync {
+                crate::DisplaySync::Block => wgpu::PresentMode::Fifo,
+                crate::DisplaySync::Recent => wgpu::PresentMode::AutoNoVsync,
+                crate::DisplaySync::Tear => wgpu::PresentMode::AutoNoVsync,
+            };
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            surface.config.present_mode = match config.display_sync {
+                crate::DisplaySync::Block => wgpu::PresentMode::Fifo,
+                crate::DisplaySync::Recent => wgpu::PresentMode::Mailbox,
+                crate::DisplaySync::Tear => wgpu::PresentMode::Immediate,
+            };
+        }
 
         surface.raw.configure(&self.device, &surface.config);
     }
