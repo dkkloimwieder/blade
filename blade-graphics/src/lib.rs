@@ -334,6 +334,18 @@ impl From<Texture> for TexturePiece {
     }
 }
 
+/// Layout of texture data in a buffer or byte slice.
+///
+/// Used for texture upload operations to describe how pixel data is organized.
+#[derive(Clone, Copy, Debug)]
+pub struct TextureDataLayout {
+    /// Bytes per row of texture data.
+    /// Must be aligned to 256 bytes on WebGPU.
+    pub bytes_per_row: u32,
+    /// Number of rows per image (for 3D textures or texture arrays).
+    pub rows_per_image: u32,
+}
+
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Hash, Eq, Ord, PartialEq, PartialOrd)]
 pub enum TextureFormat {

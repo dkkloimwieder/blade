@@ -961,6 +961,52 @@ impl Context {
             pool.init(&self.device, &self.queue);
         }
     }
+
+    /// Write data directly to a texture.
+    ///
+    /// This is a convenience method for uploading texture data without using
+    /// a staging buffer. Useful for atlas updates and small texture uploads.
+    ///
+    /// # Arguments
+    /// * `dst` - Destination texture piece (texture, mip level, array layer, origin)
+    /// * `data` - Raw pixel data to upload
+    /// * `data_layout` - Layout of the source data (bytes per row, rows per image)
+    /// * `size` - Size of the region to write
+    pub fn write_texture(
+        &self,
+        dst: crate::TexturePiece,
+        data: &[u8],
+        data_layout: crate::TextureDataLayout,
+        size: crate::Extent,
+    ) {
+        let hub = self.hub.read().unwrap();
+        let texture_entry = hub.textures.get(dst.texture.raw)
+            .expect("Invalid texture handle");
+
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture_entry.gpu,
+                mip_level: dst.mip_level,
+                origin: wgpu::Origin3d {
+                    x: dst.origin[0],
+                    y: dst.origin[1],
+                    z: dst.origin[2],
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(data_layout.bytes_per_row),
+                rows_per_image: Some(data_layout.rows_per_image),
+            },
+            wgpu::Extent3d {
+                width: size.width,
+                height: size.height,
+                depth_or_array_layers: size.depth,
+            },
+        );
+    }
 }
 
 //=============================================================================
