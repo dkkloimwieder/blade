@@ -1,0 +1,3 @@
+[submodule "vendor/gpui-ce"]
+	path = vendor/gpui-ce
+	url = https://github.com/dkkloimwieder/gpui-ce

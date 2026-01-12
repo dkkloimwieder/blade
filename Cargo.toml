@@ -9,6 +9,7 @@ members = [
     "blade-render",
     "run-wasm",
     "run-wasm-debug",
+    "vendor/gpui-ce",
 ]
 exclude = []
 
