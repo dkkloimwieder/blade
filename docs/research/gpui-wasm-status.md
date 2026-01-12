@@ -81,6 +81,24 @@ gpui-ce now compiles for `wasm32-unknown-unknown` with WebGPU rendering support!
   - `blade-graphics`, `blade-util`, `blade-macros` now use workspace versions
 - `.cargo/config.toml` updated with `blade_wgpu` cfg for WebGPU backend
 
+### 9. Browser Input Events (blade-up8c) ✅
+- `platform/web/events.rs` - Browser event to GPUI event conversion
+  - `modifiers_from_mouse_event` / `modifiers_from_keyboard_event` - Extract GPUI Modifiers
+  - `mouse_button_from_browser` - Convert browser button numbers to MouseButton
+  - `mouse_down_from_browser` / `mouse_up_from_browser` - Mouse click events
+  - `mouse_move_from_browser` / `mouse_exit_from_browser` - Mouse movement events
+  - `scroll_wheel_from_browser` - Wheel/scroll events with delta mode handling
+  - `key_down_from_browser` / `key_up_from_browser` - Keyboard events with Keystroke
+  - `is_modifier_key` / `modifiers_changed_from_keyboard` - Modifier key handling
+- `platform/web/window.rs` - WebWindow event dispatch methods
+  - `dispatch_input` - Send PlatformInput through input_callback
+  - `handle_mouse_down` / `handle_mouse_up` - With click count tracking
+  - `handle_mouse_move_event` / `handle_wheel` - Movement and scroll
+  - `handle_key_down` / `handle_key_up` - Keyboard with modifier detection
+  - `handle_mouse_enter` / `handle_mouse_leave` - Hover status
+  - `handle_focus` / `handle_blur` - Active status
+- Added web-sys features: `Event`, `EventTarget`, `AddEventListenerOptions`
+
 ## Build Commands
 
 ```bash
@@ -118,24 +136,23 @@ cargo check -p gpui-ce --no-default-features
 
 ## Next Steps
 
-### 1. Full Scene Rendering
+### 1. Wire Event Listeners to Canvas
+- Attach browser event listeners using `addEventListener` via wasm-bindgen Closure
+- Connect to WebWindow's `handle_*` methods
+- Implement requestAnimationFrame render loop
+
+### 2. Full Scene Rendering
 - Implement scene primitive rendering in WebRenderer
 - Port shader pipelines from BladeRenderer
 - Texture atlas integration with WebGPU
 - Glyph rendering for text
-
-### 2. Browser Event Handling
-- Mouse events (click, move, wheel) via web-sys EventListener
-- Keyboard events (keydown, keyup, input)
-- Touch events for mobile support
-- requestAnimationFrame render loop integration
 
 ### 3. Text Rendering
 - Embed fonts in WASM binary
 - Initialize cosmic-text with embedded fonts
 - Replace NoopTextSystem with real text rendering
 
-### 4. Clipboard Integration
+### 4. Clipboard Integration (Optional)
 - Use navigator.clipboard API via web-sys
 - Async read/write with Promises
 
@@ -166,9 +183,10 @@ cargo check -p gpui-ce --no-default-features
 - `vendor/gpui-ce/` - gpui-ce submodule
 - `vendor/gpui-ce/src/platform/web/` - WASM platform implementation
   - `platform.rs` - WebPlatform, WebDisplay, WebKeyboardLayout
-  - `window.rs` - WebWindow, WebAtlas
+  - `window.rs` - WebWindow, WebAtlas, event dispatch methods
   - `dispatcher.rs` - WebDispatcher for task scheduling
   - `renderer.rs` - WebRenderer using blade-graphics WebGPU
+  - `events.rs` - Browser event to GPUI event conversion
 - `vendor/gpui-ce/Cargo.toml` - wasm feature flag, path dependencies to blade
 - `vendor/gpui-ce/src/http_stubs.rs` - HTTP client stubs for WASM
 - `vendor/gpui-util-wasm/` - WASM-compatible util library
@@ -183,5 +201,6 @@ cargo check -p gpui-ce --no-default-features
 - blade-nd1t: Fork gpui_util (closed)
 - blade-lzpj: Web platform module (closed)
 - blade-zpdc: Connect GPUI to blade-graphics WebGPU (closed)
-- blade-up8c: Browser input events (open)
+- blade-up8c: Browser input events (closed)
+- blade-8i3f: Port GPUI event handling (open)
 - blade-y2lh: Text rendering (open)
