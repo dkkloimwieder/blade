@@ -48,7 +48,16 @@ errno (compile error on wasm32)
 
 **Issue**: blade-nd1t
 
-**Solution**: Fork gpui_util, replace smol with `agnostic_async_executor` which supports WASM via wasm-bindgen.
+**Progress**:
+- Created `vendor/gpui-util-wasm/` - minimal WASM-compatible subset ✅
+- Compiles for both native and wasm32-unknown-unknown ✅
+- Contains: `ArcCow`, `ResultExt`, `post_inc`, path/serde/size/time utils
+
+**Remaining work**:
+- Modify gpui-ce's `src/util.rs` to conditionally use gpui_util_wasm on WASM
+- Add missing exports: `Deferred`, `FutureExt`, `TryFutureExt`
+
+**Key insight**: `agnostic_async_executor` can replace smol for WASM-compatible async.
 
 ### Secondary: gpui_http_client tar support
 
@@ -112,6 +121,7 @@ async-std
 - `vendor/gpui-ce/` - gpui-ce submodule
 - `vendor/gpui-ce/src/platform/web/` - WASM platform stubs
 - `vendor/gpui-ce/Cargo.toml` - wasm feature flag
+- `vendor/gpui-util-wasm/` - WASM-compatible util subset
 - `blade-graphics/src/webgpu/` - WebGPU backend (working)
 - `docs/research/gpui-wasm-feasibility.md` - Initial research
 
