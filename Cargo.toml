@@ -11,7 +11,6 @@ members = [
     "run-wasm-debug",
     "vendor/gpui-ce",
     "vendor/gpui-util-wasm",
-    "examples/gpui-web",
 ]
 exclude = []
 
