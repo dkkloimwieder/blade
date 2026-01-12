@@ -59,13 +59,11 @@ gpui-ce now compiles for `wasm32-unknown-unknown` with a functional web platform
   - Callback registration for resize, input, active status, etc.
   - `raw_window_handle` implementation for WebGPU surface creation
   - Device pixel ratio detection from browser
+  - `WebAtlas` implementing `PlatformAtlas` for sprite management
 - `platform/web/dispatcher.rs` - `WebDispatcher` implementing `PlatformDispatcher`
   - Task queue for main thread execution
   - `dispatch_after` using `setTimeout` via wasm-bindgen
   - Single-threaded execution model for WASM
-- `platform/web/atlas.rs` - `WebAtlas` implementing `PlatformAtlas`
-  - Simple texture atlas for sprite management
-  - HashMap-based tile caching
 - `platform/web/platform.rs` - `WebPlatform` implementing `Platform` trait
   - Window creation and management
   - Display bounds from browser viewport
