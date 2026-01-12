@@ -6,9 +6,9 @@
 
 Goal: Run GPUI-based UI in the browser using Blade's WebGPU backend.
 
-## Current Status: WEB PLATFORM IMPLEMENTED
+## Current Status: WEBGPU RENDERING CONNECTED
 
-gpui-ce now compiles for `wasm32-unknown-unknown` with a functional web platform implementation! The core platform traits are implemented - next step is connecting to blade-graphics WebGPU and adding full browser event handling.
+gpui-ce now compiles for `wasm32-unknown-unknown` with WebGPU rendering support! The web platform module includes a `WebRenderer` that uses blade-graphics' WebGPU backend. Next step is implementing full scene rendering and browser event handling.
 
 ## Completed Work
 
@@ -70,6 +70,17 @@ gpui-ce now compiles for `wasm32-unknown-unknown` with a functional web platform
   - Cursor style, clipboard (stubs for now)
   - Prefers-color-scheme detection for dark mode
 
+### 8. WebGPU Renderer Integration (blade-zpdc) ✅
+- `platform/web/renderer.rs` - `WebRenderer` using blade-graphics WebGPU backend
+  - Async GPU context initialization via `Context::init_async`
+  - Surface creation from canvas element
+  - Frame acquisition and presentation
+  - Basic render pass (clear screen)
+  - Single-threaded design (no Send+Sync needed for WASM)
+- Local blade-graphics path dependencies in Cargo.toml
+  - `blade-graphics`, `blade-util`, `blade-macros` now use workspace versions
+- `.cargo/config.toml` updated with `blade_wgpu` cfg for WebGPU backend
+
 ## Build Commands
 
 ```bash
@@ -107,11 +118,11 @@ cargo check -p gpui-ce --no-default-features
 
 ## Next Steps
 
-### 1. Connect to blade-graphics WebGPU
-- Initialize WebGPU context from canvas element
-- Create rendering surface using `Context::create_surface_from_canvas`
-- Hook up BladeRenderer for Scene rendering
-- Integrate with WebWindow draw() callback
+### 1. Full Scene Rendering
+- Implement scene primitive rendering in WebRenderer
+- Port shader pipelines from BladeRenderer
+- Texture atlas integration with WebGPU
+- Glyph rendering for text
 
 ### 2. Browser Event Handling
 - Mouse events (click, move, wheel) via web-sys EventListener
@@ -157,11 +168,12 @@ cargo check -p gpui-ce --no-default-features
   - `platform.rs` - WebPlatform, WebDisplay, WebKeyboardLayout
   - `window.rs` - WebWindow, WebAtlas
   - `dispatcher.rs` - WebDispatcher for task scheduling
-- `vendor/gpui-ce/Cargo.toml` - wasm feature flag, dependencies
+  - `renderer.rs` - WebRenderer using blade-graphics WebGPU
+- `vendor/gpui-ce/Cargo.toml` - wasm feature flag, path dependencies to blade
 - `vendor/gpui-ce/src/http_stubs.rs` - HTTP client stubs for WASM
 - `vendor/gpui-util-wasm/` - WASM-compatible util library
 - `blade-graphics/src/webgpu/` - WebGPU backend (working)
-- `.cargo/config.toml` - getrandom wasm_js backend config
+- `.cargo/config.toml` - getrandom wasm_js + blade_wgpu cfg
 
 ## Related Issues
 
@@ -170,4 +182,6 @@ cargo check -p gpui-ce --no-default-features
 - blade-t86a: Cargo.toml config (closed)
 - blade-nd1t: Fork gpui_util (closed)
 - blade-lzpj: Web platform module (closed)
-- blade-zpdc: Connect GPUI to blade-graphics WebGPU (open)
+- blade-zpdc: Connect GPUI to blade-graphics WebGPU (closed)
+- blade-up8c: Browser input events (open)
+- blade-y2lh: Text rendering (open)
