@@ -10,6 +10,7 @@ members = [
     "run-wasm",
     "run-wasm-debug",
     "vendor/gpui-ce",
+    "vendor/gpui-util-wasm",
 ]
 exclude = []
 
