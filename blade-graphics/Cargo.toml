@@ -182,9 +182,5 @@ required-features = []
 name = "webgpu-sprite-batch"
 required-features = []
 
-[[example]]
-name = "gpui-web"
-required-features = []
-
 [lints.rust]
 unexpected_cfgs = { level = "allow", check-cfg = ['cfg(gles)', 'cfg(webgpu)', 'cfg(blade_wgpu)'] }
