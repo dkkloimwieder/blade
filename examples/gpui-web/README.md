@@ -8,7 +8,22 @@ GPUI running in the browser via WebAssembly and WebGPU.
 - wasm-pack: `cargo install wasm-pack`
 - A browser with WebGPU support (Chrome 113+, Edge 113+)
 
-## Building
+## Quick Start
+
+```bash
+# Install wasm-pack if you haven't
+cargo install wasm-pack
+
+# Build and run
+cd examples/gpui-web
+wasm-pack build --target web
+python3 -m http.server 8080
+# Open http://localhost:8080 in Chrome
+```
+
+**Why a web server?** WASM runs in a browser, and browsers block loading WASM from `file://` URLs for security. A local HTTP server is required.
+
+## Building Options
 
 ### Option 1: wasm-pack (recommended)
 
@@ -36,19 +51,22 @@ wasm-bindgen target/wasm32-unknown-unknown/release/gpui_web.wasm \
     --target web
 ```
 
-## Running
+## Serving
 
-1. Build using one of the methods above
-2. Serve the directory with a web server:
-   ```bash
-   # Python
-   python -m http.server 8080
+After building, serve the directory with any HTTP server:
 
-   # Or Node.js
-   npx serve .
-   ```
-3. Open http://localhost:8080 in a WebGPU-enabled browser
-4. Open DevTools console to see log messages
+```bash
+# Python (built-in)
+python3 -m http.server 8080
+
+# Node.js
+npx serve .
+
+# Or any other static file server
+```
+
+Then open http://localhost:8080 in a WebGPU-enabled browser (Chrome 113+).
+Open DevTools console (F12) to see log messages.
 
 ## What You'll See
 
