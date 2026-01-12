@@ -99,6 +99,18 @@ gpui-ce now compiles for `wasm32-unknown-unknown` with WebGPU rendering support!
   - `handle_focus` / `handle_blur` - Active status
 - Added web-sys features: `Event`, `EventTarget`, `AddEventListenerOptions`
 
+### 10. Event Listener Wiring (blade-8i3f) ✅
+- `platform/web/event_listeners.rs` - Attach DOM event listeners to canvas
+  - `setup_event_listeners()` - Attach all listeners to canvas, returns EventListeners struct
+  - `start_animation_loop()` - Start requestAnimationFrame render loop
+  - Mouse listeners: mousedown, mouseup, mousemove, mouseenter, mouseleave, wheel
+  - Keyboard listeners: keydown, keyup (canvas must be focusable via tabindex)
+  - Focus listeners: focus, blur
+  - Window resize listener
+  - Context menu prevention for right-click
+- Uses wasm-bindgen `Closure` pattern with stored references to keep closures alive
+- Performance API for timestamp in click count detection
+
 ## Build Commands
 
 ```bash
@@ -136,27 +148,22 @@ cargo check -p gpui-ce --no-default-features
 
 ## Next Steps
 
-### 1. Wire Event Listeners to Canvas
-- Attach browser event listeners using `addEventListener` via wasm-bindgen Closure
-- Connect to WebWindow's `handle_*` methods
-- Implement requestAnimationFrame render loop
-
-### 2. Full Scene Rendering
+### 1. Full Scene Rendering
 - Implement scene primitive rendering in WebRenderer
 - Port shader pipelines from BladeRenderer
 - Texture atlas integration with WebGPU
 - Glyph rendering for text
 
-### 3. Text Rendering
+### 2. Text Rendering
 - Embed fonts in WASM binary
 - Initialize cosmic-text with embedded fonts
 - Replace NoopTextSystem with real text rendering
 
-### 4. Clipboard Integration (Optional)
+### 3. Clipboard Integration (Optional)
 - Use navigator.clipboard API via web-sys
 - Async read/write with Promises
 
-### 5. HTTP Image Loading (Optional)
+### 4. HTTP Image Loading (Optional)
 - Implement fetch-based image loading using web-sys
 - Convert Response to image bytes
 
@@ -187,6 +194,7 @@ cargo check -p gpui-ce --no-default-features
   - `dispatcher.rs` - WebDispatcher for task scheduling
   - `renderer.rs` - WebRenderer using blade-graphics WebGPU
   - `events.rs` - Browser event to GPUI event conversion
+  - `event_listeners.rs` - DOM event listener attachment via wasm-bindgen Closure
 - `vendor/gpui-ce/Cargo.toml` - wasm feature flag, path dependencies to blade
 - `vendor/gpui-ce/src/http_stubs.rs` - HTTP client stubs for WASM
 - `vendor/gpui-util-wasm/` - WASM-compatible util library
@@ -202,5 +210,6 @@ cargo check -p gpui-ce --no-default-features
 - blade-lzpj: Web platform module (closed)
 - blade-zpdc: Connect GPUI to blade-graphics WebGPU (closed)
 - blade-up8c: Browser input events (closed)
-- blade-8i3f: Port GPUI event handling (open)
+- blade-8i3f: Port GPUI event handling (closed)
 - blade-y2lh: Text rendering (open)
+- blade-0p1e: Minimal GPUI component demo (open)
