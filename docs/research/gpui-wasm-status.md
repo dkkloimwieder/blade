@@ -171,4 +171,5 @@ cargo check -p gpui-ce --no-default-features
 - blade-fdp1: Fork + platform target (closed)
 - blade-t86a: Cargo.toml config (closed)
 - blade-nd1t: Fork gpui_util (closed)
-- blade-lzpj: Web platform module (in progress)
+- blade-lzpj: Web platform module (closed)
+- blade-zpdc: Connect GPUI to blade-graphics WebGPU (open)
