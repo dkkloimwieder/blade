@@ -6,9 +6,15 @@
 
 Goal: Run GPUI-based UI in the browser using Blade's WebGPU backend.
 
-## Current Status: WEBGPU RENDERING CONNECTED
+## Current Status: INPUT EVENTS WIRED
 
-gpui-ce now compiles for `wasm32-unknown-unknown` with WebGPU rendering support! The web platform module includes a `WebRenderer` that uses blade-graphics' WebGPU backend. Next step is implementing full scene rendering and browser event handling.
+gpui-ce now compiles for `wasm32-unknown-unknown` with WebGPU rendering and browser input handling! The web platform includes:
+- `WebRenderer` using blade-graphics WebGPU backend
+- Full browser event handling (mouse, keyboard, scroll, focus)
+- DOM event listeners via wasm-bindgen Closure
+- requestAnimationFrame render loop
+
+Next step is implementing full scene rendering (primitives, shaders, text).
 
 ## Completed Work
 
