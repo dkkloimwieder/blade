@@ -154,12 +154,13 @@ fn main() {
                             let color_index = CLICK_COUNT.with(|c| *c.borrow());
                             let color = get_quad_color(color_index);
 
-                            // Draw a 200x200 quad centered on mouse position
-                            let quad_size = 200.0;
-                            let x = (mx - quad_size / 2.0).max(0.0);
-                            let y = (my - quad_size / 2.0).max(0.0);
-
-                            renderer.draw_test_quad(x, y, quad_size, quad_size, color);
+                            // Draw test text at top-left
+                            renderer.draw_test_text(
+                                "Hello GPUI Web!",
+                                20.0, 20.0,
+                                32.0,
+                                [0.0, 0.0, 1.0, 1.0], // White
+                            );
                         }
                     }
                     _ => {}
