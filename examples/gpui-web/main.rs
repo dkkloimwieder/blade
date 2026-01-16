@@ -1,172 +1,269 @@
-//! GPUI Web Example - Quad Rendering Test
+//! GPUI Web Demo - Interactive Component
 //!
-//! Demonstrates WebRenderer's quad rendering in the browser.
-//! - Renders a colored quad that follows the mouse
-//! - Click to cycle through colors (red, green, blue)
-//! - Shows rounded corners
+//! Demonstrates a full GPUI component running in the browser:
+//! - Click the box to increment counter
+//! - Hover to see color change
+//! - Press 'r' to reset
 //!
 //! Run with: cargo run-wasm --example gpui-web
 
-use std::cell::RefCell;
-
-#[cfg(target_arch = "wasm32")]
-use blade_graphics as gpu;
-
-thread_local! {
-    static CLICK_COUNT: RefCell<u32> = const { RefCell::new(0) };
-    static MOUSE_POS: RefCell<(f32, f32)> = const { RefCell::new((400.0, 300.0)) };
-}
-
-/// Get quad color based on click count (HSL format)
-fn get_quad_color(index: u32) -> [f32; 4] {
-    match index % 6 {
-        0 => [0.0, 1.0, 0.5, 1.0],    // Red
-        1 => [0.33, 1.0, 0.5, 1.0],   // Green
-        2 => [0.66, 1.0, 0.5, 1.0],   // Blue
-        3 => [0.08, 1.0, 0.5, 1.0],   // Orange
-        4 => [0.83, 1.0, 0.5, 1.0],   // Purple
-        _ => [0.5, 1.0, 0.5, 1.0],    // Cyan
-    }
-}
-
-/// Main for native (sync init)
-#[cfg(not(all(target_arch = "wasm32", blade_wgpu)))]
+/// Main for native (not supported)
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    env_logger::init();
     println!("This example is designed for WASM. Run with:");
-    println!("  RUSTFLAGS=\"--cfg blade_wgpu\" cargo run-wasm --example gpui-web");
+    println!("  cargo run-wasm --example gpui-web");
 }
 
-/// Main for WebGPU WASM (async init)
-#[cfg(all(target_arch = "wasm32", blade_wgpu))]
-fn main() {
-    use gpui::{DevicePixels, Size, WebRenderer, WebSurfaceConfig};
-    use std::rc::Rc;
-    use winit::platform::web::WindowExtWebSys as _;
-    use wasm_bindgen::JsCast;
+// WASM imports
+#[cfg(target_arch = "wasm32")]
+use gpui::{
+    div, prelude::*, px, rgb, size, App, Application, Bounds, Context, Hsla,
+    IntoElement, KeyBinding, ParentElement, Render, Styled, Window, WindowBounds, WindowOptions,
+};
 
+// Reset counter action
+#[cfg(target_arch = "wasm32")]
+gpui::actions!(counter_demo, [ResetCounter]);
+
+/// Main for WASM
+#[cfg(target_arch = "wasm32")]
+fn main() {
     console_error_panic_hook::set_once();
     console_log::init_with_level(log::Level::Debug).expect("Failed to init logger");
 
-    let event_loop = winit::event_loop::EventLoop::new().unwrap();
-    let window_attributes = winit::window::Window::default_attributes()
-        .with_title("GPUI Quad Test");
-    let window = Rc::new(event_loop.create_window(window_attributes).unwrap());
+    // Direct console log to verify web_sys works
+    web_sys::console::log_1(&"=== GPUI WEB DEMO STARTING (direct console) ===".into());
 
-    // Set up canvas
-    let canvas = window.canvas().unwrap();
-    canvas.set_id(gpu::CANVAS_ID);
+    log::info!("Starting GPUI Web Demo...");
 
-    // Style the canvas to fill the viewport
+    // Ensure canvas exists in DOM
+    setup_canvas();
+
+    // Initialize renderer FIRST (async), then open window
+    // This ensures the GPU atlas is available when text is first rasterized
+    init_renderer_then_run_app();
+}
+
+/// Initialize the WebRenderer first, then run the GPUI app
+#[cfg(target_arch = "wasm32")]
+fn init_renderer_then_run_app() {
+    use blade_graphics as gpu;
+    use gpui::{WebRenderer, WebSurfaceConfig};
+
+    wasm_bindgen_futures::spawn_local(async {
+        log::info!("Starting async renderer initialization...");
+
+        let canvas = gpui::get_canvas_element("gpui-canvas").expect("no canvas");
+
+        // Use the CSS display size (client dimensions), not the buffer size
+        // The buffer size is set by canvas.set_width/height, but GPUI uses client dimensions for layout
+        let dpr = web_sys::window().unwrap().device_pixel_ratio() as u32;
+        let display_width = (canvas.client_width() as u32).max(800) * dpr;
+        let display_height = (canvas.client_height() as u32).max(600) * dpr;
+
+        // Update canvas buffer to match display size for crisp rendering
+        canvas.set_width(display_width);
+        canvas.set_height(display_height);
+
+        let size = gpu::Extent {
+            width: display_width,
+            height: display_height,
+            depth: 1,
+        };
+
+        log::info!("Initializing renderer with size {}x{} (dpr={})", display_width, display_height, dpr);
+
+        let renderer = WebRenderer::new();
+        let config = WebSurfaceConfig {
+            size,
+            transparent: false,
+        };
+
+        match renderer.initialize_async(canvas, config).await {
+            Ok(()) => {
+                log::info!("WebRenderer initialized successfully!");
+                // Pass the renderer to the app - it will be set as pending INSIDE Application::run
+                // where the platform is already initialized
+                run_gpui_app_with_renderer(renderer);
+            }
+            Err(e) => {
+                log::error!("Failed to initialize WebRenderer: {:?}", e);
+                // Fall back to running without renderer (no rendering will work)
+                run_gpui_app_without_renderer();
+            }
+        }
+    });
+}
+
+/// Run the GPUI application with a pre-initialized renderer
+#[cfg(target_arch = "wasm32")]
+fn run_gpui_app_with_renderer(renderer: gpui::WebRenderer) {
+    use gpui::set_pending_renderer;
+
+    Application::new().run(move |cx: &mut App| {
+        log::info!("GPUI Application started, setting pending renderer...");
+
+        // Register keybinding for reset (press 'r')
+        cx.bind_keys([KeyBinding::new("r", ResetCounter, None)]);
+
+        // Now that the platform is initialized, set the pending renderer
+        // This must happen BEFORE opening the window
+        set_pending_renderer(renderer);
+
+        // Open window with our demo component
+        // The pending renderer will be automatically attached to the window
+        let bounds = Bounds::centered(None, size(px(600.), px(400.)), cx);
+        let result = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            },
+            |_window, cx| cx.new(|_cx| CounterDemo::new()),
+        );
+
+        match result {
+            Ok(handle) => {
+                web_sys::console::log_1(&format!("=== Window opened: {:?} ===", handle).into());
+                log::info!("Window opened successfully with pre-attached renderer: {:?}", handle);
+            }
+            Err(e) => {
+                web_sys::console::error_1(&format!("=== Window open FAILED: {:?} ===", e).into());
+                log::error!("Failed to open window: {:?}", e);
+            }
+        }
+    });
+
+    web_sys::console::log_1(&"=== GPUI run() returned ===".into());
+    log::info!("GPUI run() returned, browser event loop will drive execution");
+}
+
+/// Fallback: Run without renderer
+#[cfg(target_arch = "wasm32")]
+fn run_gpui_app_without_renderer() {
+    Application::new().run(|cx: &mut App| {
+        log::warn!("Running without renderer - no GPU rendering will work");
+
+        let bounds = Bounds::centered(None, size(px(600.), px(400.)), cx);
+        let _ = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            },
+            |_window, cx| cx.new(|_cx| CounterDemo::new()),
+        );
+    });
+}
+
+/// Set up the canvas element in the DOM
+#[cfg(target_arch = "wasm32")]
+fn setup_canvas() {
+    use wasm_bindgen::JsCast;
+
+    let window = web_sys::window().expect("no window");
+    let document = window.document().expect("no document");
+
+    // Check if canvas already exists
+    if document.get_element_by_id("gpui-canvas").is_some() {
+        log::info!("Canvas already exists");
+        return;
+    }
+
+    // Create canvas
+    let canvas = document
+        .create_element("canvas")
+        .expect("failed to create canvas")
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .expect("not a canvas");
+
+    canvas.set_id("gpui-canvas");
+    canvas.set_width(800);
+    canvas.set_height(600);
+
+    // Style canvas
     canvas.style().set_property("width", "100%").ok();
     canvas.style().set_property("height", "100%").ok();
     canvas.style().set_property("display", "block").ok();
 
-    let body = web_sys::window()
-        .and_then(|win| win.document())
-        .and_then(|doc| doc.body())
-        .expect("couldn't get document body");
-
-    // Style body for full viewport
+    // Style body
+    let body = document.body().expect("no body");
     body.style().set_property("margin", "0").ok();
     body.style().set_property("padding", "0").ok();
     body.style().set_property("overflow", "hidden").ok();
-    body.style().set_property("background", "#222").ok();
+    body.style().set_property("background", "#1a1a2e").ok();
 
-    body.append_child(&web_sys::Element::from(canvas.clone()))
-        .expect("couldn't append canvas to document body");
+    // Add canvas to body
+    body.append_child(&canvas).expect("failed to append canvas");
 
-    // Create WebRenderer
-    let renderer = Rc::new(WebRenderer::new());
-    let init_started = Rc::new(RefCell::new(false));
+    log::info!("Canvas created and added to DOM");
+}
 
-    let renderer_clone = renderer.clone();
-    let init_started_clone = init_started.clone();
-    let canvas_clone = canvas.clone();
+/// Demo component - a clickable counter
+#[cfg(target_arch = "wasm32")]
+struct CounterDemo {
+    count: u32,
+}
 
-    event_loop
-        .run(move |event, target| {
-            use winit::event::{Event, WindowEvent};
-            use winit::event_loop::ControlFlow;
+#[cfg(target_arch = "wasm32")]
+impl CounterDemo {
+    fn new() -> Self {
+        Self { count: 0 }
+    }
+}
 
-            target.set_control_flow(ControlFlow::Wait);
-
-            match event {
-                Event::AboutToWait => {
-                    // Start async init on first frame
-                    if !*init_started_clone.borrow() {
-                        *init_started_clone.borrow_mut() = true;
-                        let renderer_init = renderer_clone.clone();
-                        let canvas_init = canvas_clone.clone();
-                        wasm_bindgen_futures::spawn_local(async move {
-                            let size = gpu::Extent {
-                                width: canvas_init.width().max(800),
-                                height: canvas_init.height().max(600),
-                                depth: 1,
-                            };
-                            let config = WebSurfaceConfig {
-                                size,
-                                transparent: false,
-                            };
-                            if let Err(e) = renderer_init.initialize_async(canvas_init, config).await {
-                                log::error!("Failed to initialize WebRenderer: {:?}", e);
-                            } else {
-                                log::info!("WebRenderer initialized! Click to change colors, move mouse to move quad.");
-                            }
-                        });
-                    }
-                    window.request_redraw();
-                }
-                Event::WindowEvent { event, .. } => match event {
-                    WindowEvent::CloseRequested => {
-                        target.exit();
-                    }
-                    WindowEvent::Resized(size) => {
-                        if renderer.is_initialized() {
-                            renderer.update_drawable_size(Size {
-                                width: DevicePixels(size.width as i32),
-                                height: DevicePixels(size.height as i32),
-                            });
-                        }
-                    }
-                    WindowEvent::CursorMoved { position, .. } => {
-                        MOUSE_POS.with(|pos| {
-                            *pos.borrow_mut() = (position.x as f32, position.y as f32);
-                        });
-                    }
-                    WindowEvent::MouseInput { state, button, .. } => {
-                        if state == winit::event::ElementState::Pressed
-                            && button == winit::event::MouseButton::Left
-                        {
-                            CLICK_COUNT.with(|c| {
-                                let mut count = c.borrow_mut();
-                                *count = (*count + 1) % 6;
-                                log::info!("Click! Color index: {}", *count);
-                            });
-                        }
-                    }
-                    WindowEvent::KeyboardInput { event, .. } => {
-                        log::info!("Key: {:?}", event.logical_key);
-                    }
-                    WindowEvent::RedrawRequested => {
-                        if renderer.is_initialized() {
-                            let (mx, my) = MOUSE_POS.with(|pos| *pos.borrow());
-                            let color_index = CLICK_COUNT.with(|c| *c.borrow());
-                            let color = get_quad_color(color_index);
-
-                            // Draw test text at top-left
-                            renderer.draw_test_text(
-                                "Hello GPUI Web!",
-                                20.0, 20.0,
-                                32.0,
-                                [0.0, 0.0, 1.0, 1.0], // White
-                            );
-                        }
-                    }
-                    _ => {}
-                },
-                _ => {}
-            }
-        })
-        .unwrap();
+#[cfg(target_arch = "wasm32")]
+impl Render for CounterDemo {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .size_full()
+            .bg(rgb(0x1a1a2e)) // Dark navy background
+            .on_action(cx.listener(|this, _: &ResetCounter, _window, cx| {
+                this.count = 0;
+                cx.notify();
+            }))
+            .child(
+                // Title
+                div()
+                    .text_color(rgb(0xeaeaea))
+                    .text_xl()
+                    .mb_4()
+                    .child("GPUI Web Demo"),
+            )
+            .child(
+                // Clickable box
+                div()
+                    .w(px(200.))
+                    .h(px(150.))
+                    .bg(Hsla { h: 0.6, s: 0.6, l: 0.4, a: 1.0 })
+                    .rounded_lg()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .shadow_lg()
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(|this, _event, _window, cx| {
+                        this.count += 1;
+                        cx.notify();
+                    }))
+                    .hover(|style| style.bg(Hsla { h: 0.6, s: 0.7, l: 0.5, a: 1.0 }))
+                    .child(
+                        div()
+                            .text_color(rgb(0xffffff))
+                            .text_2xl()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(format!("{}", self.count)),
+                    ),
+            )
+            .child(
+                // Instructions
+                div()
+                    .mt_4()
+                    .text_color(rgb(0x888888))
+                    .text_sm()
+                    .child("Click to increment · Press R to reset"),
+            )
+    }
 }
