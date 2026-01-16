@@ -37,19 +37,35 @@ impl TestHarness {
                     .child("Press me"),
             ))
             // E02: Mouse Up
-            .child(test_card("E02", "Mouse Up", "Color changes on release",
+            .child(test_card("E02", "Mouse Up", "Count increases on mouse up",
                 div()
-                    .id("e02-release")
-                    .w(px(120.))
-                    .h(px(60.))
-                    .bg(rgb(0x22c55e))
-                    .rounded_md()
                     .flex()
                     .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .active(|style| style.bg(rgb(0x15803d)))
-                    .child("Release test"),
+                    .gap_4()
+                    .child(
+                        div()
+                            .id("e02-release")
+                            .w(px(120.))
+                            .h(px(60.))
+                            .bg(rgb(0x22c55e))
+                            .rounded_md()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .cursor_pointer()
+                            .hover(|style| style.bg(rgb(0x16a34a)))
+                            .on_mouse_up(MouseButton::Left, cx.listener(|this, _event, _window, cx| {
+                                this.mouse_up_count += 1;
+                                cx.notify();
+                            }))
+                            .child("Release me"),
+                    )
+                    .child(
+                        div()
+                            .text_xl()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(format!("Up: {}", self.mouse_up_count)),
+                    ),
             ))
             // E03: Click Counter
             .child(test_card("E03", "Click", "Count increases on click",

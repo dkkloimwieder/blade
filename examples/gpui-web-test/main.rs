@@ -263,6 +263,7 @@ pub struct TestHarness {
     ctrl_s_fired: bool,
     scroll_delta: (f32, f32),
     scroll_position: f32,
+    mouse_up_count: u32,
     // Drag state
     drag_position: Option<(f32, f32)>,
     drop_received: Option<String>,
@@ -288,6 +289,7 @@ impl TestHarness {
             ctrl_s_fired: false,
             scroll_delta: (0.0, 0.0),
             scroll_position: 0.0,
+            mouse_up_count: 0,
             drag_position: None,
             drop_received: None,
             focused_element: None,
