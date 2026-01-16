@@ -66,51 +66,154 @@ pub fn render_quad_tests() -> impl IntoElement {
                         .bg(Hsla { h: 0.833, s: 0.8, l: 0.5, a: 1.0 }),
                 ),
         ))
-        // Q04: Alpha/Opacity
+        // Q04: Alpha/Opacity - Clear demonstration with labeled boxes
         .child(test_card(
             "Q04",
             "Alpha/Opacity",
-            "Transparency gradient visible",
+            "Red boxes at 25%, 50%, 75%, 100% over striped bg",
             div()
-                .relative()
-                .w(px(200.))
-                .h(px(80.))
-                .bg(rgb(0x333355))
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                // Row of opacity boxes over striped backgrounds
                 .child(
                     div()
-                        .absolute()
-                        .top(px(10.))
-                        .left(px(10.))
-                        .w(px(60.))
-                        .h(px(60.))
-                        .bg(Hsla { h: 0.6, s: 0.8, l: 0.5, a: 0.25 }),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .top(px(10.))
-                        .left(px(50.))
-                        .w(px(60.))
-                        .h(px(60.))
-                        .bg(Hsla { h: 0.6, s: 0.8, l: 0.5, a: 0.5 }),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .top(px(10.))
-                        .left(px(90.))
-                        .w(px(60.))
-                        .h(px(60.))
-                        .bg(Hsla { h: 0.6, s: 0.8, l: 0.5, a: 0.75 }),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .top(px(10.))
-                        .left(px(130.))
-                        .w(px(60.))
-                        .h(px(60.))
-                        .bg(Hsla { h: 0.6, s: 0.8, l: 0.5, a: 1.0 }),
+                        .flex()
+                        .gap(px(8.))
+                        // 25% opacity
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .relative()
+                                        .w(px(50.))
+                                        .h(px(50.))
+                                        // Striped background: alternating white/black
+                                        .bg(rgb(0xFFFFFF))
+                                        .child(
+                                            div()
+                                                .absolute()
+                                                .top(px(0.))
+                                                .left(px(0.))
+                                                .w(px(25.))
+                                                .h(px(50.))
+                                                .bg(rgb(0x000000)),
+                                        )
+                                        // Red overlay at 25% opacity
+                                        .child(
+                                            div()
+                                                .absolute()
+                                                .top(px(5.))
+                                                .left(px(5.))
+                                                .w(px(40.))
+                                                .h(px(40.))
+                                                .bg(Hsla { h: 0.0, s: 1.0, l: 0.5, a: 0.25 }),
+                                        ),
+                                )
+                                .child(div().text_sm().text_color(rgb(0xFFFFFF)).child("25%")),
+                        )
+                        // 50% opacity
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .relative()
+                                        .w(px(50.))
+                                        .h(px(50.))
+                                        .bg(rgb(0xFFFFFF))
+                                        .child(
+                                            div()
+                                                .absolute()
+                                                .top(px(0.))
+                                                .left(px(0.))
+                                                .w(px(25.))
+                                                .h(px(50.))
+                                                .bg(rgb(0x000000)),
+                                        )
+                                        .child(
+                                            div()
+                                                .absolute()
+                                                .top(px(5.))
+                                                .left(px(5.))
+                                                .w(px(40.))
+                                                .h(px(40.))
+                                                .bg(Hsla { h: 0.0, s: 1.0, l: 0.5, a: 0.50 }),
+                                        ),
+                                )
+                                .child(div().text_sm().text_color(rgb(0xFFFFFF)).child("50%")),
+                        )
+                        // 75% opacity
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .relative()
+                                        .w(px(50.))
+                                        .h(px(50.))
+                                        .bg(rgb(0xFFFFFF))
+                                        .child(
+                                            div()
+                                                .absolute()
+                                                .top(px(0.))
+                                                .left(px(0.))
+                                                .w(px(25.))
+                                                .h(px(50.))
+                                                .bg(rgb(0x000000)),
+                                        )
+                                        .child(
+                                            div()
+                                                .absolute()
+                                                .top(px(5.))
+                                                .left(px(5.))
+                                                .w(px(40.))
+                                                .h(px(40.))
+                                                .bg(Hsla { h: 0.0, s: 1.0, l: 0.5, a: 0.75 }),
+                                        ),
+                                )
+                                .child(div().text_sm().text_color(rgb(0xFFFFFF)).child("75%")),
+                        )
+                        // 100% opacity
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .relative()
+                                        .w(px(50.))
+                                        .h(px(50.))
+                                        .bg(rgb(0xFFFFFF))
+                                        .child(
+                                            div()
+                                                .absolute()
+                                                .top(px(0.))
+                                                .left(px(0.))
+                                                .w(px(25.))
+                                                .h(px(50.))
+                                                .bg(rgb(0x000000)),
+                                        )
+                                        .child(
+                                            div()
+                                                .absolute()
+                                                .top(px(5.))
+                                                .left(px(5.))
+                                                .w(px(40.))
+                                                .h(px(40.))
+                                                .bg(Hsla { h: 0.0, s: 1.0, l: 0.5, a: 1.0 }),
+                                        ),
+                                )
+                                .child(div().text_sm().text_color(rgb(0xFFFFFF)).child("100%")),
+                        ),
                 ),
         ))
         // Q05: Corner Radius - Uniform
