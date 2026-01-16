@@ -162,7 +162,8 @@ impl<T, E: std::fmt::Debug, F: std::future::Future<Output = Result<T, E>>> std::
 
 /// Measure the duration of a block of code
 pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
-    let start = std::time::Instant::now();
+    // Use web_time::Instant which works on both native and WASM
+    let start = web_time::Instant::now();
     let result = f();
     let elapsed = start.elapsed();
     log::debug!("{}: {:?}", label, elapsed);
