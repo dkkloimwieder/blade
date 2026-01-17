@@ -640,7 +640,8 @@ fn create_test_image() -> Arc<RenderImage> {
             let cell_y = y / 8;
 
             // Create a colorful pattern based on cell position
-            let (r, g, b) = match (cell_x + cell_y) % 8 {
+            // Using u8 values directly for colors
+            let (r, g, b): (u8, u8, u8) = match (cell_x + cell_y) % 8 {
                 0 => (255, 0, 0),      // Red
                 1 => (0, 255, 0),      // Green
                 2 => (0, 0, 255),      // Blue
@@ -652,10 +653,14 @@ fn create_test_image() -> Arc<RenderImage> {
                 _ => (255, 255, 255),  // White
             };
 
-            // BGRA format (GPUI expects BGRA, not RGBA)
-            img_data.put_pixel(x, y, image::Rgba([b, g, r, 255]));
+            // BGRA format: GPUI texture expects BGRA8, but image::Rgba stores as RGBA in memory.
+            // We need to swap R and B channels so when the raw bytes are read, they're in BGRA order.
+            // image::Rgba([B, G, R, A]) will store bytes as [B, G, R, A] which is BGRA format.
+            img_data.put_pixel(x, y, image::Rgba([b, g, r, 255u8]));
         }
     }
+
+    log::info!("Created test image: {}x{}, {} bytes", width, height, img_data.as_raw().len());
 
     let frame = Frame::new(img_data);
     let frames: SmallVec<[Frame; 1]> = SmallVec::from_elem(frame, 1);
