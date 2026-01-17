@@ -17,8 +17,8 @@ fn main() {
 #[cfg(target_arch = "wasm32")]
 use gpui::{
     actions, div, prelude::*, px, rgb, size, AnyElement, App, Application, Bounds, Context,
-    FocusHandle, IntoElement, KeyBinding, MouseButton, ParentElement, Render, Styled, Window,
-    WindowBounds, WindowOptions,
+    FocusHandle, IntoElement, KeyBinding, KeyDownEvent, KeyUpEvent, ModifiersChangedEvent,
+    MouseButton, ParentElement, Render, Styled, Window, WindowBounds, WindowOptions,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -258,6 +258,7 @@ pub struct TestHarness {
     right_click_count: u32,
     mouse_position: (f32, f32),
     last_key: String,
+    last_key_up: String,
     active_modifiers: String,
     key_action_fired: bool,
     ctrl_s_fired: bool,
@@ -269,6 +270,14 @@ pub struct TestHarness {
     drop_received: Option<String>,
     // Focus state
     focused_element: Option<usize>,
+    // Focus test handles (F01-F04)
+    f01_focus: FocusHandle,
+    f02_focus_1: FocusHandle,
+    f02_focus_2: FocusHandle,
+    f02_focus_3: FocusHandle,
+    f02_focus_4: FocusHandle,
+    f04_focus: FocusHandle,
+    f04_focus_event: String,
     // Stress test state
     stress_counter: u32,
 }
@@ -284,6 +293,7 @@ impl TestHarness {
             right_click_count: 0,
             mouse_position: (0.0, 0.0),
             last_key: String::new(),
+            last_key_up: String::new(),
             active_modifiers: String::new(),
             key_action_fired: false,
             ctrl_s_fired: false,
@@ -293,6 +303,13 @@ impl TestHarness {
             drag_position: None,
             drop_received: None,
             focused_element: None,
+            f01_focus: cx.focus_handle(),
+            f02_focus_1: cx.focus_handle(),
+            f02_focus_2: cx.focus_handle(),
+            f02_focus_3: cx.focus_handle(),
+            f02_focus_4: cx.focus_handle(),
+            f04_focus: cx.focus_handle(),
+            f04_focus_event: String::new(),
             stress_counter: 0,
         }
     }
@@ -327,6 +344,7 @@ impl TestHarness {
         self.right_click_count = 0;
         self.mouse_position = (0.0, 0.0);
         self.last_key.clear();
+        self.last_key_up.clear();
         self.active_modifiers.clear();
         self.key_action_fired = false;
         self.ctrl_s_fired = false;
@@ -373,6 +391,38 @@ impl Render for TestHarness {
             }))
             .on_action(cx.listener(|this, _: &CtrlSAction, _window, cx| {
                 this.ctrl_s_fired = true;
+                cx.notify();
+            }))
+            // Global key event handler for K01 test
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
+                this.last_key = event.keystroke.key.clone();
+                cx.notify();
+            }))
+            // Key up handler for K02 test
+            .on_key_up(cx.listener(|this, event: &KeyUpEvent, _window, cx| {
+                this.last_key_up = event.keystroke.key.clone();
+                cx.notify();
+            }))
+            // Modifier change handler for K03 test
+            .on_modifiers_changed(cx.listener(|this, event: &ModifiersChangedEvent, _window, cx| {
+                let mut mods = Vec::new();
+                if event.modifiers.control {
+                    mods.push("Ctrl");
+                }
+                if event.modifiers.alt {
+                    mods.push("Alt");
+                }
+                if event.modifiers.shift {
+                    mods.push("Shift");
+                }
+                if event.modifiers.platform {
+                    mods.push("Meta");
+                }
+                this.active_modifiers = if mods.is_empty() {
+                    String::new()
+                } else {
+                    mods.join("+")
+                };
                 cx.notify();
             }))
             // Sidebar
@@ -514,7 +564,7 @@ impl TestHarness {
             TestCategory::ScrollWheel => self.render_scroll_tests(cx).into_any_element(),
             TestCategory::DragDrop => self.render_drag_drop_tests(cx).into_any_element(),
             TestCategory::Focus => self.render_focus_tests(cx).into_any_element(),
-            TestCategory::Tooltips => render_tooltip_tests().into_any_element(),
+            TestCategory::Tooltips => self.render_tooltip_tests(cx).into_any_element(),
             TestCategory::Shadows => render_aspirational_shadows().into_any_element(),
             TestCategory::Paths => render_aspirational_paths().into_any_element(),
             TestCategory::Underlines => render_aspirational_underlines().into_any_element(),

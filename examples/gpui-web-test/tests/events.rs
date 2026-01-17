@@ -307,43 +307,39 @@ impl TestHarness {
 
     pub fn render_keyboard_tests(&mut self, _cx: &mut Context<Self>) -> impl IntoElement {
         let last_key = self.last_key.clone();
+        let last_key_up = self.last_key_up.clone();
         let modifiers = self.active_modifiers.clone();
         let key_action = self.key_action_fired;
         let ctrl_s = self.ctrl_s_fired;
 
         test_grid()
             // K01: Key Down
-            .child(test_card("K01", "Key Down", "Shows key name (use global keybindings)",
+            .child(test_card("K01", "Key Down", "Shows key name on press",
                 div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(0x888888))
-                            .child("Focus the window and press keys"),
-                    )
-                    .child(
-                        div()
-                            .px_4()
-                            .py_2()
-                            .bg(rgb(0x1a1a2e))
-                            .rounded_md()
-                            .text_lg()
-                            .child(if last_key.is_empty() {
-                                "No key pressed".to_string()
-                            } else {
-                                format!("Last key: {}", last_key)
-                            }),
-                    ),
+                    .px_4()
+                    .py_2()
+                    .bg(rgb(0x1a1a2e))
+                    .rounded_md()
+                    .text_lg()
+                    .child(if last_key.is_empty() {
+                        "Press any key".to_string()
+                    } else {
+                        format!("Down: {}", last_key)
+                    }),
             ))
             // K02: Key Up
-            .child(test_card("K02", "Key Up", "Shows released state",
+            .child(test_card("K02", "Key Up", "Shows key name on release",
                 div()
-                    .text_xs()
-                    .text_color(rgb(0x888888))
-                    .child("Key up events are captured similarly to key down"),
+                    .px_4()
+                    .py_2()
+                    .bg(rgb(0x1a1a2e))
+                    .rounded_md()
+                    .text_lg()
+                    .child(if last_key_up.is_empty() {
+                        "Release any key".to_string()
+                    } else {
+                        format!("Up: {}", last_key_up)
+                    }),
             ))
             // K03: Modifier Keys
             .child(test_card("K03", "Modifier Keys", "Shows held modifiers",
@@ -379,12 +375,12 @@ impl TestHarness {
                             .child("(Bound via cx.bind_keys)"),
                     ),
             ))
-            // K05: Key Context
-            .child(test_card("K05", "Key Context", "Different actions per context",
+            // K05: Key Context - NOT IMPLEMENTED
+            .child(test_card("K05", "Key Context", "NOT IMPLEMENTED - needs context setup",
                 div()
                     .text_xs()
                     .text_color(rgb(0x888888))
-                    .child("Key contexts allow different keybindings in different UI areas"),
+                    .child("Key context demonstration not implemented"),
             ))
             // K06: Shortcut Combo
             .child(test_card("K06", "Shortcut Combo", "Press Ctrl+S",
