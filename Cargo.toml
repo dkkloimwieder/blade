@@ -106,6 +106,8 @@ wasm-bindgen = "0.2"
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 getrandom = { version = "0.3", features = ["wasm_js"] }
 gpui = { package = "gpui-ce", path = "vendor/gpui-ce", default-features = false, features = ["wasm"] }
+image = "0.25.1"
+smallvec = { version = "1.6", features = ["union"] }
 
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dev-dependencies]
 renderdoc = "0.12"

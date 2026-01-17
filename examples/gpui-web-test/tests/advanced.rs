@@ -1,8 +1,11 @@
 //! Advanced interaction tests - Drag/Drop (D01-D05), Focus (F01-F04), Tooltips (TT01-TT03), Sprites (I01-I04)
 
-use gpui::{div, prelude::*, px, rgb, Context, IntoElement, ParentElement, Pixels, Point, Render, Styled, Window};
+use gpui::{div, img, prelude::*, px, rgb, Context, IntoElement, ParentElement, Pixels, Point, Render, RenderImage, Styled, StyledImage, Window};
 use crate::TestHarness;
 use super::test_card;
+use std::sync::Arc;
+use image::{RgbaImage, Frame};
+use smallvec::SmallVec;
 
 // =============================================================================
 // DRAG ITEM - Data and Preview
@@ -624,7 +627,46 @@ impl TestHarness {
 // SPRITE TESTS (I01-I04)
 // =============================================================================
 
+/// Create a colorful checkerboard image for testing
+fn create_test_image() -> Arc<RenderImage> {
+    let width = 64u32;
+    let height = 64u32;
+    let mut img_data = RgbaImage::new(width, height);
+
+    // Create a colorful gradient/checkerboard pattern
+    for y in 0..height {
+        for x in 0..width {
+            let cell_x = x / 8;
+            let cell_y = y / 8;
+
+            // Create a colorful pattern based on cell position
+            let (r, g, b) = match (cell_x + cell_y) % 8 {
+                0 => (255, 0, 0),      // Red
+                1 => (0, 255, 0),      // Green
+                2 => (0, 0, 255),      // Blue
+                3 => (255, 255, 0),    // Yellow
+                4 => (255, 0, 255),    // Magenta
+                5 => (0, 255, 255),    // Cyan
+                6 => (255, 128, 0),    // Orange
+                7 => (128, 0, 255),    // Purple
+                _ => (255, 255, 255),  // White
+            };
+
+            // BGRA format (GPUI expects BGRA, not RGBA)
+            img_data.put_pixel(x, y, image::Rgba([b, g, r, 255]));
+        }
+    }
+
+    let frame = Frame::new(img_data);
+    let frames: SmallVec<[Frame; 1]> = SmallVec::from_elem(frame, 1);
+    Arc::new(RenderImage::new(frames))
+}
+
 pub fn render_sprite_tests() -> impl IntoElement {
+    // Create test image once for reuse
+    let test_image = create_test_image();
+    let test_image_for_grayscale = test_image.clone();
+
     test_grid()
         // I01: Monochrome Sprite
         .child(test_card("I01", "Monochrome Sprite", "Renders with tint color",
@@ -673,12 +715,29 @@ pub fn render_sprite_tests() -> impl IntoElement {
                         .child("★"),
                 ),
         ))
-        // I02: Polychrome Sprite
+        // I02: Polychrome Sprite - actual image
         .child(test_card("I02", "Polychrome Sprite", "Colors preserved",
             div()
-                .text_xs()
-                .text_color(rgb(0x888888))
-                .child("Use img() or svg() element for polychrome images"),
+                .flex()
+                .items_center()
+                .gap_4()
+                .child(
+                    div()
+                        .bg(rgb(0x1a1a2e))
+                        .rounded_md()
+                        .p_2()
+                        .child(
+                            img(test_image.clone())
+                                .w(px(64.))
+                                .h(px(64.))
+                        ),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0x888888))
+                        .child("64x64 colorful checkerboard"),
+                ),
         ))
         // I03: Sprite Opacity
         .child(test_card("I03", "Sprite Opacity", "Transparency visible",
@@ -741,11 +800,60 @@ pub fn render_sprite_tests() -> impl IntoElement {
                         .child("●"),
                 ),
         ))
-        // I04: Sprite Grayscale
+        // I04: Sprite Grayscale - same image with grayscale filter
         .child(test_card("I04", "Sprite Grayscale", "Desaturated",
             div()
-                .text_xs()
-                .text_color(rgb(0x888888))
-                .child("Grayscale filter not yet available in GPUI WASM"),
+                .flex()
+                .items_center()
+                .gap_4()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            div()
+                                .bg(rgb(0x1a1a2e))
+                                .rounded_md()
+                                .p_2()
+                                .child(
+                                    img(test_image_for_grayscale.clone())
+                                        .w(px(64.))
+                                        .h(px(64.))
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0x888888))
+                                .child("Original"),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            div()
+                                .bg(rgb(0x1a1a2e))
+                                .rounded_md()
+                                .p_2()
+                                .child(
+                                    img(test_image_for_grayscale)
+                                        .w(px(64.))
+                                        .h(px(64.))
+                                        .grayscale(true)
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0x888888))
+                                .child("Grayscale"),
+                        ),
+                ),
         ))
 }
