@@ -189,6 +189,7 @@ The WebRenderer handles all GPU rendering using blade-graphics' WebGPU backend.
 | Pipeline | Purpose | Shader | Instance Data |
 |----------|---------|--------|---------------|
 | `quad_pipeline` | Solid rectangles | `vs_quad` → `fs_quad` | Bounds, colors, corners |
+| `shadow_pipeline` | Blurred shadows | `vs_shadow` → `fs_shadow` | Bounds, blur radius, corners, color |
 | `mono_sprite_pipeline` | Grayscale glyphs | `vs_mono_sprite` → `fs_mono_sprite` | Atlas tile, tint color |
 | `poly_sprite_pipeline` | Color sprites | `vs_poly_sprite` → `fs_poly_sprite` | Atlas tile, opacity |
 
@@ -587,7 +588,6 @@ fn is_emoji(c: char) -> bool {
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Shadow rendering | TODO | `PrimitiveBatch::Shadows` ignored in renderer |
 | Path rendering | TODO | Vector fill/stroke not implemented |
 | Underline rendering | TODO | Text underlines not drawn |
 | Surface rendering | TODO | Native image surfaces not supported |
@@ -620,7 +620,7 @@ fn is_emoji(c: char) -> bool {
 ## Future Work
 
 ### Rendering
-- [ ] Implement shadow rendering with blur
+- [x] Implement shadow rendering with blur
 - [ ] Add path fill/stroke support
 - [ ] Implement underline rendering
 - [ ] Support surface primitives
