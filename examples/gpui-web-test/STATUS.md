@@ -56,7 +56,8 @@ frame duration: 5.6ms
 
 ### Sprite Rendering (I01-I04 Tests)
 - **Test**: I01-I04 Sprite tests
-- **Status**: Needs verification with release build
+- **Status**: I01 FIXED - stars now render with correct tint colors
+- **Fix**: Narrowed emoji detection in `text_system.rs` to exclude Miscellaneous Symbols range (0x2600-0x27BF)
 
 ---
 
@@ -75,7 +76,7 @@ frame duration: 5.6ms
 | Drag/Drop (D01-D05) | 5 | ✓ | ? | ? |
 | Focus (F01-F04) | 4 | ✓ | ? | ? |
 | Tooltips (TT01-TT03) | 3 | ✓ | ? | ? |
-| Sprites (I01-I04) | 4 | ✓ | ? | ? |
+| Sprites (I01-I04) | 4 | ✓ | ✓ | I01 ✓ |
 | Stress (ST01-ST08) | 8 | ✓ | ? | ? |
 | Shadows (SH01-SH05) | 5 | ✓ | N/A | N/A |
 | Paths (P01-P04) | 4 | ✓ | N/A | N/A |
@@ -113,9 +114,9 @@ The following timing instrumentation was added for debugging:
 
 - **blade-tfmy**: Layout recalculation slowness - Fixed by using release build
 - **blade-13ip**: Emoji rasterization bug - Fixed BGRA handling for emojis
+- **blade-xfdf**: Monochrome sprites (I01) - Fixed emoji detection to exclude Miscellaneous Symbols (0x2600-0x27BF)
 
 ## Open Issues
 
 - **blade-gtnd**: Ensure WASM examples default to release build
 - **blade-jsp3**: Opacity/alpha rendering verification
-- **blade-xfdf**: Sprite rendering verification

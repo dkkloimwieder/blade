@@ -235,22 +235,22 @@ dstFactor: OneMinusSrcAlpha
 
 ---
 
-### blade-xfdf: Monochrome sprites (I01)
+### blade-xfdf: Monochrome sprites (I01) - FIXED
 **Priority**: P2
+**Status**: RESOLVED
 
 **Test**: I01 - Monochrome Sprite (stars ★)
 **Expected**: Unicode symbols rendered with tint color
-**Observed**: May not be rendering at all
+**Observed**: Stars rendered white instead of colored
 
-**Investigation**:
-1. Check if monochrome sprite batches exist in scene
-2. Check atlas lookup for text glyphs
-3. Check monochrome sprite shader
-4. Add debug logging for sprite rendering
+**Root Cause**:
+The star character "★" (U+2605) was incorrectly classified as an emoji due to overly broad emoji detection in the web text system. The range `0x2600-0x27BF` (Miscellaneous Symbols) was included in emoji detection, causing these characters to be rendered via `paint_emoji` → `PolychromeSprite` which ignores `text_color`.
 
-**Files**:
-- `vendor/gpui-ce/src/platform/web/renderer.rs:481-497` - mono sprite drawing
-- `vendor/gpui-ce/src/platform/web/renderer.rs:599-665` - draw_mono_sprites_internal
+**Fix**:
+Removed the `0x2600-0x27BF` range from emoji detection in `vendor/gpui-ce/src/platform/web/text_system.rs:489-494`. Now only characters >= `0x1F000` (actual emoji blocks) and variation selectors are treated as emoji.
+
+**Files Changed**:
+- `vendor/gpui-ce/src/platform/web/text_system.rs:489-494` - emoji detection heuristic
 
 ---
 
