@@ -1264,8 +1264,11 @@ impl Context {
         plain_data: &[u8],
     ) {
         // Reuse uniform buffer for plain data (avoids expensive create_buffer_init every frame)
+        // Add alignment padding to ensure last dynamic offset + binding_size fits in buffer
+        // (dynamic offset can be up to plain_data.len(), and binding needs 256 bytes)
         let (plain_data_buffer, uniform_buffer_index) = if !plain_data.is_empty() {
-            let (buffer, buffer_index) = uniform_buffer.ensure_capacity(&self.device, plain_data.len() as u64);
+            let required_size = plain_data.len() as u64 + 256; // padding for last binding
+            let (buffer, buffer_index) = uniform_buffer.ensure_capacity(&self.device, required_size);
             self.queue.write_buffer(buffer, 0, plain_data);
             (Some(buffer), buffer_index)
         } else {

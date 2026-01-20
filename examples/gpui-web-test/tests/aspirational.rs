@@ -79,18 +79,23 @@ fn shadow_box() -> gpui::Div {
         )
 }
 
-fn shadow_box_custom(blur: f32, color: gpui::Hsla) -> gpui::Div {
+fn shadow_box_colored(color: gpui::Hsla) -> gpui::Div {
     div()
-        .w(px(100.))
-        .h(px(80.))
-        .bg(rgb(0x4a4a8e))
-        .rounded_md()
-        .shadow(vec![BoxShadow {
-            color,
-            offset: point(px(0.), px(4.)),
-            blur_radius: px(blur),
-            spread_radius: px(0.),
-        }])
+        .p_8()
+        .bg(rgb(0xffffff))
+        .child(
+            div()
+                .w(px(100.))
+                .h(px(80.))
+                .bg(rgb(0x4a4a8e))
+                .rounded_md()
+                .shadow(vec![BoxShadow {
+                    color,
+                    offset: point(px(0.), px(4.)),
+                    blur_radius: px(15.),
+                    spread_radius: px(0.),
+                }])
+        )
 }
 
 // =============================================================================
@@ -114,22 +119,23 @@ pub fn render_aspirational_shadows() -> impl IntoElement {
                         .child("Expected: Soft shadow around box"),
                 ),
         ))
-        .child(not_implemented_banner())
-        // SH02: Shadow Color
+        // SH02: Shadow Color - NOW IMPLEMENTED
         .child(test_card("SH02", "Shadow Color", "Colored shadow",
             div()
                 .flex()
                 .gap_4()
-                .child(placeholder_visual("colored"))
+                .child(shadow_box_colored(hsla(0.6, 0.8, 0.4, 0.5))) // Blue shadow
+                .child(shadow_box_colored(hsla(0.0, 0.8, 0.5, 0.4))) // Red shadow
                 .child(
                     div()
                         .text_xs()
                         .text_color(rgb(0x888888))
                         .flex()
                         .items_center()
-                        .child("Expected: Blue-tinted shadow"),
+                        .child("Blue and red shadows"),
                 ),
         ))
+        .child(not_implemented_banner())
         // SH03: Shadow Offset
         .child(test_card("SH03", "Shadow Offset", "Shadow with x/y offset",
             div()
