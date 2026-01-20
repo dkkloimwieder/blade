@@ -98,6 +98,25 @@ fn shadow_box_colored(color: gpui::Hsla) -> gpui::Div {
         )
 }
 
+fn shadow_box_offset(x: f32, y: f32) -> gpui::Div {
+    div()
+        .p_8()
+        .bg(rgb(0xffffff))
+        .child(
+            div()
+                .w(px(100.))
+                .h(px(80.))
+                .bg(rgb(0x4a4a8e))
+                .rounded_md()
+                .shadow(vec![BoxShadow {
+                    color: hsla(0.0, 0.0, 0.0, 0.3),
+                    offset: point(px(x), px(y)),
+                    blur_radius: px(12.),
+                    spread_radius: px(0.),
+                }])
+        )
+}
+
 // =============================================================================
 // SHADOW TESTS (SH01-SH05) - NOT IMPLEMENTED
 // =============================================================================
@@ -135,22 +154,24 @@ pub fn render_aspirational_shadows() -> impl IntoElement {
                         .child("Blue and red shadows"),
                 ),
         ))
-        .child(not_implemented_banner())
-        // SH03: Shadow Offset
+        // SH03: Shadow Offset - NOW IMPLEMENTED
         .child(test_card("SH03", "Shadow Offset", "Shadow with x/y offset",
             div()
                 .flex()
                 .gap_4()
-                .child(placeholder_visual("offset"))
+                .child(shadow_box_offset(8., 8.))   // Down-right
+                .child(shadow_box_offset(-8., 8.))  // Down-left
+                .child(shadow_box_offset(0., 12.))  // Straight down
                 .child(
                     div()
                         .text_xs()
                         .text_color(rgb(0x888888))
                         .flex()
                         .items_center()
-                        .child("Expected: Shadow offset down-right"),
+                        .child("Shadows: down-right, down-left, straight down"),
                 ),
         ))
+        .child(not_implemented_banner())
         // SH04: Shadow Blur
         .child(test_card("SH04", "Shadow Blur", "Varying blur radius",
             div()
