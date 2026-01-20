@@ -1,7 +1,7 @@
 //! Aspirational tests - Features not yet implemented in GPUI WASM
 //! Shadows (SH01-SH05), Paths (P01-P04), Underlines (U01-U05)
 
-use gpui::{div, px, rgb, IntoElement, ParentElement, Styled};
+use gpui::{div, hsla, point, px, rgb, BoxShadow, IntoElement, ParentElement, Styled};
 use super::test_card;
 
 /// Helper function to create a test grid
@@ -65,19 +65,46 @@ fn placeholder_visual(label: &str) -> impl IntoElement {
         .child(label.to_string())
 }
 
+fn shadow_box() -> gpui::Div {
+    div()
+        .p_8()
+        .bg(rgb(0xffffff))
+        .child(
+            div()
+                .w(px(100.))
+                .h(px(80.))
+                .bg(rgb(0x4a4a8e))
+                .rounded_md()
+                .shadow_lg()
+        )
+}
+
+fn shadow_box_custom(blur: f32, color: gpui::Hsla) -> gpui::Div {
+    div()
+        .w(px(100.))
+        .h(px(80.))
+        .bg(rgb(0x4a4a8e))
+        .rounded_md()
+        .shadow(vec![BoxShadow {
+            color,
+            offset: point(px(0.), px(4.)),
+            blur_radius: px(blur),
+            spread_radius: px(0.),
+        }])
+}
+
 // =============================================================================
 // SHADOW TESTS (SH01-SH05) - NOT IMPLEMENTED
 // =============================================================================
 
 pub fn render_aspirational_shadows() -> impl IntoElement {
     test_grid()
-        .child(not_implemented_banner())
-        // SH01: Basic Shadow
+        // SH01: Basic Shadow - NOW IMPLEMENTED
         .child(test_card("SH01", "Basic Shadow", "Shadow visible around element",
             div()
                 .flex()
                 .gap_4()
-                .child(placeholder_visual("shadow_lg"))
+                .child(shadow_box())
                 .child(
                     div()
                         .text_xs()
@@ -87,6 +114,7 @@ pub fn render_aspirational_shadows() -> impl IntoElement {
                         .child("Expected: Soft shadow around box"),
                 ),
         ))
+        .child(not_implemented_banner())
         // SH02: Shadow Color
         .child(test_card("SH02", "Shadow Color", "Colored shadow",
             div()

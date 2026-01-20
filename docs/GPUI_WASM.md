@@ -288,6 +288,88 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 }
 ```
 
+#### Shadow Shader
+
+Shadows use Gaussian blur approximation with 4 samples along the Y-axis and an error function (erf) along X for performance.
+
+**Struct Alignment**: The `Bounds` struct uses individual `f32` fields (not `vec2<f32>`) to match Rust's memory layout exactly. Using `vec2` causes misalignment because WGSL requires 8-byte alignment for vec2 while Rust packs f32s at 4-byte boundaries.
+
+```wgsl
+struct Bounds {
+    origin_x: f32,
+    origin_y: f32,
+    size_width: f32,
+    size_height: f32,
+}
+
+struct Shadow {
+    order: u32,
+    blur_radius: f32,
+    bounds: Bounds,
+    corner_radii: Corners,
+    content_mask: Bounds,
+    color: Hsla,
+}
+```
+
+**Vertex Shader**: Expands the shadow bounds by `3 * blur_radius` to accommodate the blur spread:
+
+```wgsl
+@vertex
+fn vs_shadow(...) -> ShadowVarying {
+    let margin = 3.0 * shadow.blur_radius;
+    shadow.bounds.origin_x -= margin;
+    shadow.bounds.origin_y -= margin;
+    shadow.bounds.size_width += 2.0 * margin;
+    shadow.bounds.size_height += 2.0 * margin;
+    // ...
+}
+```
+
+**Fragment Shader**: Computes soft shadow using blur integration:
+
+```wgsl
+@fragment
+fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
+    // Clip check
+    if (any(input.clip_distances < vec4<f32>(0.0))) {
+        return vec4<f32>(0.0);
+    }
+
+    // Sample blur along Y axis (4 samples)
+    var alpha = 0.0;
+    for (var i = 0; i < 4; i += 1) {
+        let blur = blur_along_x(...);  // Uses erf approximation
+        alpha += blur * gaussian(y, shadow.blur_radius) * step;
+        y += step;
+    }
+
+    // Color's alpha controls darkness, blur alpha controls coverage
+    return vec4<f32>(input.color.rgb * input.color.a, alpha);
+}
+```
+
+**Usage in Rust**:
+
+```rust
+use gpui::{div, Styled};
+
+// Standard shadow presets
+div().shadow_sm()   // Small shadow
+div().shadow_md()   // Medium shadow
+div().shadow_lg()   // Large shadow
+div().shadow_xl()   // Extra large shadow
+
+// Custom shadow
+use gpui::{BoxShadow, hsla, point, px};
+div().shadow(vec![BoxShadow {
+    color: hsla(0.0, 0.0, 0.0, 0.25),
+    offset: point(px(0.), px(4.)),
+    blur_radius: px(8.),
+    spread_radius: px(0.),
+}])
+```
+
 #### Sprite Shaders
 
 **Critical**: `textureSample` must be called before any divergent control flow:
