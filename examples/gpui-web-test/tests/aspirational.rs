@@ -117,6 +117,25 @@ fn shadow_box_offset(x: f32, y: f32) -> gpui::Div {
         )
 }
 
+fn shadow_box_blur(blur: f32) -> gpui::Div {
+    div()
+        .p_8()
+        .bg(rgb(0xffffff))
+        .child(
+            div()
+                .w(px(80.))
+                .h(px(60.))
+                .bg(rgb(0x4a4a8e))
+                .rounded_md()
+                .shadow(vec![BoxShadow {
+                    color: hsla(0.0, 0.0, 0.0, 0.35),
+                    offset: point(px(0.), px(4.)),
+                    blur_radius: px(blur),
+                    spread_radius: px(0.),
+                }])
+        )
+}
+
 // =============================================================================
 // SHADOW TESTS (SH01-SH05) - NOT IMPLEMENTED
 // =============================================================================
@@ -171,24 +190,25 @@ pub fn render_aspirational_shadows() -> impl IntoElement {
                         .child("Shadows: down-right, down-left, straight down"),
                 ),
         ))
-        .child(not_implemented_banner())
-        // SH04: Shadow Blur
+        // SH04: Shadow Blur - NOW IMPLEMENTED
         .child(test_card("SH04", "Shadow Blur", "Varying blur radius",
             div()
                 .flex()
                 .gap_4()
-                .child(placeholder_visual("blur=2"))
-                .child(placeholder_visual("blur=8"))
-                .child(placeholder_visual("blur=16"))
+                .child(shadow_box_blur(2.))
+                .child(shadow_box_blur(8.))
+                .child(shadow_box_blur(16.))
+                .child(shadow_box_blur(24.))
                 .child(
                     div()
                         .text_xs()
                         .text_color(rgb(0x888888))
                         .flex()
                         .items_center()
-                        .child("Expected: Increasing blur"),
+                        .child("Blur: 2px, 8px, 16px, 24px"),
                 ),
         ))
+        .child(not_implemented_banner())
         // SH05: Multiple Shadows
         .child(test_card("SH05", "Multiple Shadows", "Stacked shadows",
             div()
