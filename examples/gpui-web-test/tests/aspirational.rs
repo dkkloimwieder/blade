@@ -136,6 +136,57 @@ fn shadow_box_blur(blur: f32) -> gpui::Div {
         )
 }
 
+fn shadow_box_multi() -> gpui::Div {
+    div()
+        .p_8()
+        .bg(rgb(0xffffff))
+        .child(
+            div()
+                .w(px(100.))
+                .h(px(80.))
+                .bg(rgb(0x4a4a8e))
+                .rounded_md()
+                .shadow(vec![
+                    // Outer soft shadow
+                    BoxShadow {
+                        color: hsla(0.0, 0.0, 0.0, 0.15),
+                        offset: point(px(0.), px(10.)),
+                        blur_radius: px(20.),
+                        spread_radius: px(0.),
+                    },
+                    // Inner sharp shadow
+                    BoxShadow {
+                        color: hsla(0.0, 0.0, 0.0, 0.3),
+                        offset: point(px(0.), px(2.)),
+                        blur_radius: px(4.),
+                        spread_radius: px(0.),
+                    },
+                ])
+        )
+}
+
+fn shadow_box_glow() -> gpui::Div {
+    div()
+        .p_8()
+        .bg(rgb(0x1a1a2e))
+        .child(
+            div()
+                .w(px(100.))
+                .h(px(80.))
+                .bg(rgb(0x4a4a8e))
+                .rounded_md()
+                .shadow(vec![
+                    // Colored glow effect
+                    BoxShadow {
+                        color: hsla(0.7, 0.8, 0.5, 0.6),
+                        offset: point(px(0.), px(0.)),
+                        blur_radius: px(20.),
+                        spread_radius: px(2.),
+                    },
+                ])
+        )
+}
+
 // =============================================================================
 // SHADOW TESTS (SH01-SH05) - NOT IMPLEMENTED
 // =============================================================================
@@ -208,20 +259,20 @@ pub fn render_aspirational_shadows() -> impl IntoElement {
                         .child("Blur: 2px, 8px, 16px, 24px"),
                 ),
         ))
-        .child(not_implemented_banner())
-        // SH05: Multiple Shadows
+        // SH05: Multiple Shadows - NOW IMPLEMENTED
         .child(test_card("SH05", "Multiple Shadows", "Stacked shadows",
             div()
                 .flex()
                 .gap_4()
-                .child(placeholder_visual("multi"))
+                .child(shadow_box_multi())
+                .child(shadow_box_glow())
                 .child(
                     div()
                         .text_xs()
                         .text_color(rgb(0x888888))
                         .flex()
                         .items_center()
-                        .child("Expected: Inner + outer shadow"),
+                        .child("Layered shadow + glow effect"),
                 ),
         ))
 }
