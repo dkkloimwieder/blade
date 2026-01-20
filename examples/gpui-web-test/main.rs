@@ -231,7 +231,7 @@ impl TestCategory {
             TestCategory::DragDrop => "Drag & Drop",
             TestCategory::Focus => "Focus/Tab",
             TestCategory::Tooltips => "Tooltips",
-            TestCategory::Shadows => "Shadows*",
+            TestCategory::Shadows => "Shadows",
             TestCategory::Paths => "Paths*",
             TestCategory::Underlines => "Underlines*",
             TestCategory::Sprites => "Sprites",
@@ -242,7 +242,7 @@ impl TestCategory {
     fn is_implemented(&self) -> bool {
         !matches!(
             self,
-            TestCategory::Shadows | TestCategory::Paths | TestCategory::Underlines
+            TestCategory::Paths | TestCategory::Underlines
         )
     }
 }
@@ -565,7 +565,7 @@ impl TestHarness {
             TestCategory::DragDrop => self.render_drag_drop_tests(cx).into_any_element(),
             TestCategory::Focus => self.render_focus_tests(cx).into_any_element(),
             TestCategory::Tooltips => self.render_tooltip_tests(cx).into_any_element(),
-            TestCategory::Shadows => render_aspirational_shadows().into_any_element(),
+            TestCategory::Shadows => render_shadows().into_any_element(),
             TestCategory::Paths => render_aspirational_paths().into_any_element(),
             TestCategory::Underlines => render_aspirational_underlines().into_any_element(),
             TestCategory::Sprites => render_sprite_tests().into_any_element(),

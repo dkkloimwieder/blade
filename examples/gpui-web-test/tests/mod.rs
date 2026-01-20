@@ -5,6 +5,7 @@ mod layout;
 mod text;
 mod events;
 mod advanced;
+mod shadows;
 mod aspirational;
 mod stress;
 
@@ -13,6 +14,7 @@ pub use layout::*;
 pub use text::*;
 // events and stress only define impl blocks on TestHarness
 pub use advanced::*;
+pub use shadows::*;
 pub use aspirational::*;
 
 use gpui::{div, px, rgb, IntoElement, ParentElement, Styled};
