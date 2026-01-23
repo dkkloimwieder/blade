@@ -1,8 +1,43 @@
 //! Aspirational tests - Features not yet implemented in GPUI WASM
 //! Paths (P01-P04), Underlines (U01-U05)
 
-use gpui::{div, px, rgb, IntoElement, ParentElement, Styled};
+use gpui::{
+    canvas, div, point, px, rgb, IntoElement, ParentElement, PathBuilder, Pixels, Point, Styled,
+};
 use super::test_card;
+
+/// Create a filled triangle path
+fn create_triangle(p1: Point<Pixels>, p2: Point<Pixels>, p3: Point<Pixels>) -> gpui::Path<Pixels> {
+    let mut builder = PathBuilder::fill();
+    builder.move_to(p1);
+    builder.line_to(p2);
+    builder.line_to(p3);
+    builder.close();
+    builder.build().unwrap()
+}
+
+/// Canvas element that draws a purple triangle
+fn triangle_canvas() -> impl IntoElement {
+    canvas(
+        move |_bounds, _window, _cx| {},
+        move |bounds, _, window, _cx| {
+            let center_x = bounds.origin.x + bounds.size.width / 2.0;
+            let center_y = bounds.origin.y + bounds.size.height / 2.0;
+
+            // Draw a triangle pointing up
+            let triangle = create_triangle(
+                point(center_x, center_y - px(30.)),           // Top
+                point(center_x - px(30.), center_y + px(20.)), // Bottom left
+                point(center_x + px(30.), center_y + px(20.)), // Bottom right
+            );
+            window.paint_path(triangle, rgb(0x6366f1)); // Purple
+        },
+    )
+    .w(px(100.))
+    .h(px(80.))
+    .bg(rgb(0x1a1a2e))
+    .rounded_md()
+}
 
 /// Helper function to create a test grid
 fn test_grid() -> gpui::Div {
@@ -72,35 +107,22 @@ fn placeholder_visual(label: &str) -> impl IntoElement {
 
 pub fn render_aspirational_paths() -> impl IntoElement {
     test_grid()
-        .child(not_implemented_banner())
-        // P01: Triangle
+        // P01: Triangle - NOW IMPLEMENTED
         .child(test_card("P01", "Triangle", "Path with 3 vertices",
             div()
                 .flex()
                 .gap_4()
-                .child(
-                    // ASCII art representation of expected output
-                    div()
-                        .w(px(100.))
-                        .h(px(80.))
-                        .bg(rgb(0x1a1a2e))
-                        .rounded_md()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_3xl()
-                        .text_color(rgb(0x6366f1))
-                        .child("▲"),
-                )
+                .child(triangle_canvas())
                 .child(
                     div()
                         .text_xs()
                         .text_color(rgb(0x888888))
                         .flex()
                         .items_center()
-                        .child("Expected: Filled triangle"),
+                        .child("Filled triangle using PathBuilder"),
                 ),
         ))
+        .child(not_implemented_banner())
         // P02: Custom Polygon
         .child(test_card("P02", "Custom Polygon", "5-sided polygon",
             div()
