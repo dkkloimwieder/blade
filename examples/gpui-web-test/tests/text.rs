@@ -1,4 +1,4 @@
-//! Text rendering tests (T01-T11) and Underline tests (U01-U03)
+//! Text rendering tests (T01-T11) and Text decoration tests (U01-U04)
 
 use gpui::{div, px, rgb, IntoElement, ParentElement, Styled};
 use super::test_card;
@@ -277,6 +277,23 @@ pub fn render_underline_tests() -> impl IntoElement {
                         .text_decoration_color(rgb(0xf59e0b))
                         .text_decoration_2()
                         .child("Orange thick underline"),
+                ),
+        ))
+        // U04: Strikethrough
+        .child(test_card("U04", "Strikethrough", "Line through text center",
+            div()
+                .flex()
+                .gap_4()
+                .child(
+                    div()
+                        .line_through()
+                        .child("Strikethrough text"),
+                )
+                .child(
+                    div()
+                        .line_through()
+                        .text_decoration_color(rgb(0xef4444))
+                        .child("Red strikethrough"),
                 ),
         ))
 }
