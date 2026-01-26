@@ -1,4 +1,4 @@
-//! Text rendering tests (T01-T11)
+//! Text rendering tests (T01-T11) and Underline tests (U01-U03)
 
 use gpui::{div, px, rgb, IntoElement, ParentElement, Styled};
 use super::test_card;
@@ -214,5 +214,69 @@ pub fn render_text_tests() -> impl IntoElement {
                         .child(div().w(px(30.)).h(px(30.)).bg(rgb(0x22c55e))),
                 )
                 .child("Text below"),
+        ))
+}
+
+// =============================================================================
+// UNDERLINE TESTS (U01-U03)
+// =============================================================================
+
+pub fn render_underline_tests() -> impl IntoElement {
+    test_grid()
+        // U01: Basic Underline
+        .child(test_card("U01", "Basic Underline", "Line under text",
+            div()
+                .flex()
+                .gap_4()
+                .child(
+                    div()
+                        .underline()
+                        .child("Underlined text"),
+                )
+                .child(
+                    div()
+                        .underline()
+                        .text_decoration_2()
+                        .child("Thick underline"),
+                ),
+        ))
+        // U02: Wavy Underline
+        .child(test_card("U02", "Wavy Underline", "Wavy line visible",
+            div()
+                .flex()
+                .gap_4()
+                .child(
+                    div()
+                        .underline()
+                        .text_decoration_wavy()
+                        .text_decoration_color(rgb(0xef4444))
+                        .child("Wavy red underline"),
+                )
+                .child(
+                    div()
+                        .underline()
+                        .text_decoration_wavy()
+                        .text_decoration_color(rgb(0x22c55e))
+                        .child("Wavy green underline"),
+                ),
+        ))
+        // U03: Underline Color
+        .child(test_card("U03", "Underline Color", "Colored underline",
+            div()
+                .flex()
+                .gap_4()
+                .child(
+                    div()
+                        .underline()
+                        .text_decoration_color(rgb(0x3b82f6))
+                        .child("Blue underline"),
+                )
+                .child(
+                    div()
+                        .underline()
+                        .text_decoration_color(rgb(0xf59e0b))
+                        .text_decoration_2()
+                        .child("Orange thick underline"),
+                ),
         ))
 }

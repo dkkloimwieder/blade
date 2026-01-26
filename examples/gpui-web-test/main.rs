@@ -565,7 +565,7 @@ impl TestHarness {
             TestCategory::Tooltips => self.render_tooltip_tests(cx).into_any_element(),
             TestCategory::Shadows => render_shadows().into_any_element(),
             TestCategory::Paths => render_path_tests().into_any_element(),
-            TestCategory::Underlines => render_aspirational_underlines().into_any_element(),
+            TestCategory::Underlines => render_underline_tests().into_any_element(),
             TestCategory::Sprites => render_sprite_tests().into_any_element(),
             TestCategory::StressTests => self.render_stress_tests(cx).into_any_element(),
         }
