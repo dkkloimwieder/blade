@@ -232,18 +232,16 @@ impl TestCategory {
             TestCategory::Focus => "Focus/Tab",
             TestCategory::Tooltips => "Tooltips",
             TestCategory::Shadows => "Shadows",
-            TestCategory::Paths => "Paths*",
-            TestCategory::Underlines => "Underlines*",
+            TestCategory::Paths => "Paths",
+            TestCategory::Underlines => "Underlines",
             TestCategory::Sprites => "Sprites",
             TestCategory::StressTests => "Stress Tests",
         }
     }
 
     fn is_implemented(&self) -> bool {
-        !matches!(
-            self,
-            TestCategory::Paths | TestCategory::Underlines
-        )
+        // All test categories are now implemented
+        true
     }
 }
 

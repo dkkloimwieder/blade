@@ -79,13 +79,12 @@ frame duration: 5.6ms
 | Sprites (I01-I04) | 4 | ✓ | ✓ | I01 ✓ |
 | Stress (ST01-ST08) | 8 | ✓ | ? | ? |
 | Shadows (SH01-SH05) | 5 | ✓ | ✓ | ✓ |
-| Paths (P01-P04) | 4 | ✓ | N/A | N/A |
-| Underlines (U01-U05) | 5 | ✓ | N/A | N/A |
+| Paths (P01-P04) | 4 | ✓ | ✓ | ✓ |
+| Underlines (U01-U03) | 3 | ✓ | ✓ | ? |
 
 Legend:
 - ✓ = Confirmed working
 - ? = Needs verification
-- N/A = Not implemented (paths/underlines still aspirational)
 
 ---
 
