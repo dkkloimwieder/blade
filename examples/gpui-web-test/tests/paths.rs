@@ -1,11 +1,12 @@
-//! Path rendering tests - P01-P07
+//! Path rendering tests - P01-P08
 //! P01-P02: Filled polygons (straight lines)
 //! P03-P04: Filled shapes with bezier curves
 //! P05: Stroked (unfilled) paths
 //! P06-P07: Line segments (straight and curved)
+//! P08: Gradient fills
 
 use gpui::{
-    canvas, div, point, px, rgb, IntoElement, ParentElement, PathBuilder, Pixels, Point, Styled,
+    canvas, div, linear_color_stop, linear_gradient, point, px, rgb, hsla, IntoElement, ParentElement, PathBuilder, Pixels, Point, Styled,
 };
 use super::test_card;
 
@@ -405,6 +406,82 @@ fn p07_curved_lines() -> impl IntoElement {
     .rounded_md()
 }
 
+/// P08a: Gradient-filled triangle
+fn p08a_gradient_triangle() -> impl IntoElement {
+    canvas(
+        move |_bounds, _window, _cx| {},
+        move |bounds, _, window, _cx| {
+            let cx = bounds.origin.x + bounds.size.width / 2.0;
+            let cy = bounds.origin.y + bounds.size.height / 2.0;
+
+            let triangle = create_filled_triangle(
+                point(cx, cy - px(25.)),           // Top
+                point(cx - px(25.), cy + px(20.)), // Bottom left
+                point(cx + px(25.), cy + px(20.)), // Bottom right
+            );
+            // Gradient from red (top) to blue (bottom)
+            let gradient = linear_gradient(
+                180.0,  // Angle: 180 = top to bottom
+                linear_color_stop(hsla(0.0, 0.8, 0.5, 1.0), 0.0),    // Red at 0%
+                linear_color_stop(hsla(0.6, 0.8, 0.5, 1.0), 1.0),    // Blue at 100%
+            );
+            window.paint_path(triangle, gradient);
+        },
+    )
+    .w(px(80.))
+    .h(px(70.))
+    .bg(rgb(0x1a1a2e))
+    .rounded_md()
+}
+
+/// P08b: Gradient-filled circle
+fn p08b_gradient_circle() -> impl IntoElement {
+    canvas(
+        move |_bounds, _window, _cx| {},
+        move |bounds, _, window, _cx| {
+            let cx = bounds.origin.x + bounds.size.width / 2.0;
+            let cy = bounds.origin.y + bounds.size.height / 2.0;
+
+            let circle = create_filled_circle(point(cx, cy), px(25.));
+            // Gradient from yellow (left) to purple (right)
+            let gradient = linear_gradient(
+                90.0,   // Angle: 90 = left to right
+                linear_color_stop(hsla(0.15, 1.0, 0.5, 1.0), 0.0),   // Yellow at 0%
+                linear_color_stop(hsla(0.8, 0.8, 0.5, 1.0), 1.0),    // Purple at 100%
+            );
+            window.paint_path(circle, gradient);
+        },
+    )
+    .w(px(80.))
+    .h(px(70.))
+    .bg(rgb(0x1a1a2e))
+    .rounded_md()
+}
+
+/// P08c: Gradient-filled hexagon
+fn p08c_gradient_hexagon() -> impl IntoElement {
+    canvas(
+        move |_bounds, _window, _cx| {},
+        move |bounds, _, window, _cx| {
+            let cx = bounds.origin.x + bounds.size.width / 2.0;
+            let cy = bounds.origin.y + bounds.size.height / 2.0;
+
+            let hexagon = create_filled_polygon(point(cx, cy), px(25.), 6);
+            // Diagonal gradient from green (top-left) to teal (bottom-right)
+            let gradient = linear_gradient(
+                135.0,   // Angle: 135 = diagonal top-left to bottom-right
+                linear_color_stop(hsla(0.33, 0.8, 0.4, 1.0), 0.0),   // Green at 0%
+                linear_color_stop(hsla(0.5, 0.8, 0.4, 1.0), 1.0),    // Teal at 100%
+            );
+            window.paint_path(hexagon, gradient);
+        },
+    )
+    .w(px(80.))
+    .h(px(70.))
+    .bg(rgb(0x1a1a2e))
+    .rounded_md()
+}
+
 /// Helper function to create a test grid
 fn test_grid() -> gpui::Div {
     div().flex().flex_col().gap_4()
@@ -522,6 +599,26 @@ pub fn render_path_tests() -> impl IntoElement {
                         .child("Red: curve up")
                         .child("Green: curve down")
                         .child("Blue: S-curve"),
+                ),
+        ))
+        // P08: Gradient fills
+        .child(test_card("P08", "Gradient Fills", "Linear gradient backgrounds",
+            div()
+                .flex()
+                .gap_4()
+                .items_center()
+                .child(p08a_gradient_triangle())
+                .child(p08b_gradient_circle())
+                .child(p08c_gradient_hexagon())
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .text_xs()
+                        .text_color(rgb(0x888888))
+                        .child("Red→Blue (180°)")
+                        .child("Yellow→Purple (90°)")
+                        .child("Green→Teal (135°)"),
                 ),
         ))
 }
